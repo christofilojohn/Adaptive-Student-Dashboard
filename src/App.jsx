@@ -715,14 +715,14 @@ function PassphraseGate({ onUnlock }) {
         setChecking(true);
         setError("");
         const hash = await sha256(phrase.trim());
-        // Test with a simple request
         try {
             const r = await fetch(LLM_CONFIG.proxy_url, {
                 method: "POST", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ passphraseHash: hash, systemPrompt: "Reply with {}", userMsg: "test", maxTokens: 10 })
             });
             const data = await r.json();
-            if (data.error) { setError("Wrong passphrase"); setChecking(false); return; }
+            // 403 = wrong passphrase, anything else means passphrase was accepted
+            if (r.status === 403) { setError("Wrong passphrase"); setChecking(false); return; }
             passphraseHash = hash;
             onUnlock();
         } catch {
