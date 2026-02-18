@@ -177,12 +177,17 @@ async function callLLM(msg, state) {
         console.log("[LLM raw]", raw);
         const parsed = parseResponse(raw);
         console.log("[LLM parsed]", parsed);
-        if (parsed) return { actions: parsed.actions, reply: parsed.reply || "Done! ✨" };
+        if (parsed && (parsed.actions.length > 0 || parsed.reply)) {
+            return { actions: parsed.actions, reply: parsed.reply || "Done! ✨" };
+        }
+        // If we got raw text but couldn't parse actions, show what came back
+        console.warn("[LLM] No actions/reply parsed from:", raw);
         return { actions: [], reply: "Done! ✨" };
     } catch (e) {
         chatCtrl = null;
+        console.error("[LLM error]", e);
         if (e?.name === "AbortError") return { actions: [], reply: "" };
-        return { actions: [], reply: "Couldn't process that — try rephrasing?" };
+        return { actions: [], reply: `Error: ${e.message}` };
     }
 }
 

@@ -1,7 +1,8 @@
-// Netlify serverless function — proxies requests to Gemini Flash 2.5
+// Netlify serverless function — proxies requests to Gemini Flash
 // Env vars needed:
 //   GEMINI_API_KEY     — your Google AI Studio key
 //   PASSPHRASE_HASH   — SHA-256 hex of your passphrase
+//   GEMINI_MODEL       — (optional) defaults to gemini-2.0-flash
 
 export default async (req) => {
     if (req.method === "OPTIONS") {
@@ -26,12 +27,15 @@ export default async (req) => {
             return json({ error: "GEMINI_API_KEY not configured" }, 500);
         }
 
-        // Call Gemini Flash 2.5 (gemini-2.5-flash-preview-05-20)
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+        const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
         const geminiBody = {
+            system_instruction: {
+                parts: [{ text: systemPrompt }]
+            },
             contents: [
-                { role: "user", parts: [{ text: `${systemPrompt}\n\nUser message: ${userMsg}` }] }
+                { role: "user", parts: [{ text: userMsg }] }
             ],
             generationConfig: {
                 temperature: 0.3,
@@ -48,8 +52,22 @@ export default async (req) => {
 
         const data = await r.json();
 
-        // Extract text from Gemini response
-        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+        if (data.error) {
+            console.error("Gemini API error:", JSON.stringify(data.error));
+            return json({ error: data.error.message || "Gemini API error" }, 502);
+        }
+
+        // Extract text — thinking models may have thought parts before the real output
+        let text = "{}";
+        const parts = data?.candidates?.[0]?.content?.parts;
+        if (parts && parts.length > 0) {
+            for (let i = parts.length - 1; i >= 0; i--) {
+                if (parts[i].text) {
+                    text = parts[i].text;
+                    break;
+                }
+            }
+        }
 
         return json({ content: text });
     } catch (e) {
