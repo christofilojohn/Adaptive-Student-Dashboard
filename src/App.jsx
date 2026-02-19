@@ -17,7 +17,7 @@ async function sha256(text) {
 }
 
 // ═══════════════════════════════════════════════════
-// SMART EMOJI GUESSER
+//  Hardcoded EMOJI GUESSER
 // ═══════════════════════════════════════════════════
 const HAS_EMOJI = /[\p{Emoji_Presentation}\p{Extended_Pictographic}]/u;
 const EMOJI_MAP = [
@@ -131,7 +131,7 @@ User: Trip to Ireland next week
 
 RULES:
 - Extract ACTUAL content. Analyze the deep context (e.g., countries, brands, emotional tone, specific activities) and ALWAYS append ONE fitting, standard Unicode emoji to the end of the text/title.
-- CRITICAL EMOJI RULE: Use STRICTLY valid standard Unicode emojis. NEVER mix regional indicator letters with text (e.g., correctly output "Visit Ireland 🇮🇪", NEVER output "Visit Ireland 🇮reland"). 
+- CRITICAL EMOJI RULE: Use STRICTLY valid standard Unicode emojis. NEVER mix regional indicator letters with text (e.g., correctly output "Visit Ireland 🇮🇪", NEVER output "Visit Ireland 🇮reland").
 - Recognize synonyms for completion: "done", "complete", "finish", "check off" all map to "complete_task".
 - Use DATE REFERENCE below to resolve dates accurately.
 - Keep reply under 20 words
@@ -323,7 +323,7 @@ const MOOD_RULES = [
     { mood: "intense",    pattern: /\b(intense|serious|critical|important|power|determined|no excuses|push)\b/i },
     { mood: "mysterious",  pattern: /\b(mysteri|dark|midnight|shadow|secret|enigma|noir|spooky)\b/i },
     { mood: "ocean",      pattern: /\b(ocean|sea|water|wave|beach|surf|coast|marine|island)\b/i },
-    { mood: "nature",     pattern: /\b(forest|nature|green|earth|garden|tree|plant|hike|mountain|outdoor)\b/i },
+    { mood: "nature",     pattern: /\b(forest|nature|green|earth|garden|tree|plant|hike|mountain|outdoor|quest)\b/i },
     { mood: "sunset",     pattern: /\b(sunset|sunrise|golden|dusk|twilight|dawn|horizon|sky)\b/i },
     { mood: "dreamy",     pattern: /\b(dream|whimsical|fantasy|magic|wonder|fairy|starry|wish)\b/i },
     { mood: "calm",       pattern: /\b(calm|serene|peaceful|tranquil|zen|meditat|mindful|breathe|quiet)\b/i },
