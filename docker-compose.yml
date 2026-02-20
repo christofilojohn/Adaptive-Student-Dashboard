@@ -1,0 +1,90 @@
+# ╔══════════════════════════════════════════════════════════╗
+# ║  Adaptive Dashboard — Docker Compose                     ║
+# ║                                                          ║
+# ║  Usage:                                                  ║
+# ║    NVIDIA:  docker compose --profile nvidia up           ║
+# ║    AMD:     docker compose --profile amd up              ║
+# ║    CPU:     docker compose --profile cpu up              ║
+# ╚══════════════════════════════════════════════════════════╝
+
+x-common: &common
+  image: adaptive-dashboard
+  ports:
+    - "3000:3000"
+  volumes:
+    - ${MODEL_DIR:-./models}:/models:ro
+  environment:
+    - MODEL_PATH=/models/Phi-3.5-mini-instruct-Q4_K_M.gguf
+    - LLM_CONTEXT=${LLM_CONTEXT:-4096}
+    - LLM_THREADS=${LLM_THREADS:-4}
+  restart: unless-stopped
+
+services:
+  # ── NVIDIA GPU ──────────────────────────────────────────
+  dashboard-nvidia:
+    <<: *common
+    build:
+      context: .
+      args:
+        BUILD_TYPE: cuda
+    environment:
+      - MODEL_PATH=/models/Phi-3.5-mini-instruct-Q4_K_M.gguf
+      - LLM_CONTEXT=${LLM_CONTEXT:-4096}
+      - LLM_THREADS=${LLM_THREADS:-4}
+      - LLM_NGL=999
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    profiles: [nvidia]
+
+  # ── AMD ROCm GPU ────────────────────────────────────────
+  dashboard-amd:
+    <<: *common
+    build:
+      context: .
+      args:
+        BUILD_TYPE: rocm
+    image: adaptive-dashboard-rocm
+    environment:
+      - MODEL_PATH=/models/Phi-3.5-mini-instruct-Q4_K_M.gguf
+      - LLM_CONTEXT=${LLM_CONTEXT:-4096}
+      - LLM_THREADS=${LLM_THREADS:-4}
+      - LLM_NGL=999
+      - HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-}
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+      - render
+    profiles: [amd]
+
+  # ── CPU fallback ────────────────────────────────────────
+  dashboard-cpu:
+    <<: *common
+    build:
+      context: .
+      args:
+        BUILD_TYPE: cpu
+    image: adaptive-dashboard-cpu
+    environment:
+      - MODEL_PATH=/models/Phi-3.5-mini-instruct-Q4_K_M.gguf
+      - LLM_CONTEXT=${LLM_CONTEXT:-4096}
+      - LLM_THREADS=${LLM_THREADS:-8}
+      - LLM_NGL=0
+    profiles: [cpu]
+
+  # ── Model downloader (one-shot utility) ─────────────────
+  download-model:
+    image: alpine/curl
+    volumes:
+      - ${MODEL_DIR:-./models}:/models
+    command: >
+      curl -L --progress-bar
+        "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf"
+        -o /models/Phi-3.5-mini-instruct-Q4_K_M.gguf
+    profiles: [download]
