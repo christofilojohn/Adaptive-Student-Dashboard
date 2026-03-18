@@ -9,7 +9,7 @@ const LLM_CONFIG = {
     local_model: "phi-3.5-mini-instruct",
 };
 const POSTIT_CHAR_LIMIT = 120;
-const TASK_CHAR_LIMIT = 80;
+const TASK_CHAR_LIMIT = 90;
 
 // ═══════════════════════════════════════════════════
 // SMART EMOJI GUESSER
