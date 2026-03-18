@@ -9,7 +9,7 @@ const LLM_CONFIG = {
     local_model: "phi-3.5-mini-instruct",
 };
 const POSTIT_CHAR_LIMIT = 120;
-const TASK_CHAR_LIMIT = 80;
+const TASK_CHAR_LIMIT = 90;
 
 // ═══════════════════════════════════════════════════
 // SMART EMOJI GUESSER
@@ -310,7 +310,7 @@ const MOOD_RULES = [
     { mood: "cozy",       pattern: /\b(cozy|cosy|warm|comfort|snug|blanket|candle|tea|fireplace|hygge|homey)\b/i },
     { mood: "focus",      pattern: /\b(focus|concentrate|deep work|grind|lock in|study|exam|pomodoro|timer)\b/i, actionBoost: ["add_timer"] },
     { mood: "creative",   pattern: /\b(creat|design|art|sketch|paint|draw|brainstorm|inspir|imagin|idea|write|draft|blog)\b/i },
-    { mood: "sleepy",     pattern: /\b(sleep|tired|exhaust|nap|rest|bedtime|late night|insomnia|zzz)\b/i },
+    { mood: "sleepy",     pattern: /\b(sleep|tired|exhaust|nap|rest|bedtime|late night|insomnia|zzz|too much work)\b/i },
     { mood: "chill",      pattern: /\b(chill|relax|laid back|vibe|mellow|easy|no rush|take it easy|wind down)\b/i },
     { mood: "curious",    pattern: /\b(wonder|curious|what if|how does|why|interest|explore|discover|learn)\b/i },
     { mood: "playful",    pattern: /\b(fun|play|game|silly|goofy|party|joke|lol|haha|😂|🎉)\b/i },
