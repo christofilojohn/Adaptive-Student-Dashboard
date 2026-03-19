@@ -9,6 +9,13 @@ A local-first AI dashboard powered by **Phi-3.5-mini** running entirely on your 
 The fastest path — native Metal GPU acceleration, no Docker needed:
 
 ```bash
+# One command: installs llama.cpp + Node deps, then launches
+make
+```
+
+Or step by step:
+
+```bash
 # 1. Install llama.cpp (one-time)
 brew install llama.cpp
 
@@ -35,11 +42,17 @@ The script will:
 # Prerequisites: Docker + NVIDIA Container Toolkit
 # https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
 
-# Download the model first
-mkdir -p models
-docker compose --profile download run download-model
+# Download the model first (one-time)
+make docker-download-model
 
-# Launch
+# Build + launch
+make docker-nvidia
+```
+
+Or with plain Docker commands:
+```bash
+mkdir -p models
+docker compose --profile download run --rm download-model
 docker compose --profile nvidia up
 ```
 → Open `http://localhost:3000`
@@ -47,13 +60,12 @@ docker compose --profile nvidia up
 **Option B — Native (faster cold start):**
 
 ```bash
-# Build llama.cpp with CUDA
+# Install llama.cpp with CUDA + npm deps, then launch
+make
+
+# Or manually:
 ./scripts/install-llama.sh
-
-# Install Node.js if needed
-# Ubuntu: curl -fsSL https://fnm.vercel.app/install | bash && fnm install 20
-
-# Launch
+# Ubuntu Node.js: curl -fsSL https://fnm.vercel.app/install | bash && fnm install 20
 ./start.sh
 ```
 
@@ -67,14 +79,21 @@ docker compose --profile nvidia up
 # Prerequisites: ROCm drivers installed
 # https://rocm.docs.amd.com/projects/install-on-linux/en/latest/
 
+make docker-download-model
+make docker-amd
+```
+
+Or with plain Docker commands:
+```bash
 mkdir -p models
-docker compose --profile download run download-model
+docker compose --profile download run --rm download-model
 docker compose --profile amd up
 ```
 
-> If your GPU isn't auto-detected, set `HSA_OVERRIDE_GFX_VERSION` in `.env`:
-> ```
-> # .env
+> If your GPU isn't auto-detected, copy `.env.example` to `.env` and set `HSA_OVERRIDE_GFX_VERSION`:
+> ```bash
+> cp .env.example .env
+> # then edit .env:
 > HSA_OVERRIDE_GFX_VERSION=10.3.0   # RX 6000 series
 > HSA_OVERRIDE_GFX_VERSION=11.0.0   # RX 7000 series
 > ```
@@ -82,8 +101,7 @@ docker compose --profile amd up
 **Option B — Native:**
 
 ```bash
-./scripts/install-llama.sh   # auto-detects ROCm
-./start.sh
+make   # auto-detects ROCm
 ```
 
 ---
@@ -94,10 +112,28 @@ Works on any machine, just slower (~3-8 tokens/sec):
 
 ```bash
 # Docker
-docker compose --profile cpu up
+make docker-cpu
 
 # Native
-./start.sh    # auto-falls-back to CPU mode
+make    # auto-falls-back to CPU mode
+```
+
+---
+
+## Makefile reference
+
+```
+make                       Install deps + launch (default)
+make install               Install llama-server + npm packages only
+make run                   Start LLM server + frontend
+
+make docker-download-model Download model to ./models/
+make docker-nvidia         Build + run (NVIDIA CUDA)
+make docker-amd            Build + run (AMD ROCm)
+make docker-cpu            Build + run (CPU only)
+
+make clean                 Remove .llm.log / .ui.log
+make help                  Show all targets
 ```
 
 ---
@@ -152,16 +188,19 @@ docker build --build-arg BUILD_TYPE=cpu -t adaptive-dashboard-cpu .
 
 ```
 dashboard/
-├── start.sh                 ← 🚀 Main launcher (all platforms)
+├── Makefile                 ← One-command launcher (make)
+├── start.sh                 ← Native launcher (all platforms)
 ├── docker-compose.yml       ← Docker (NVIDIA / AMD / CPU profiles)
 ├── Dockerfile               ← Multi-stage build
-├── .env.example             ← Config template
+├── .env.example             ← Config template (copy to .env to customize)
+├── .gitignore
 ├── frontend/
 │   ├── src/App.jsx          ← Your dashboard app
 │   ├── src/main.jsx
 │   ├── index.html
 │   ├── vite.config.js       ← Proxies /v1/* to llama-server
-│   └── package.json
+│   ├── package.json
+│   └── package-lock.json
 ├── scripts/
 │   └── install-llama.sh    ← llama.cpp auto-installer
 └── docker/
@@ -198,7 +237,7 @@ docker compose logs dashboard-nvidia
 **GPU not used (NGL=0):**
 - macOS: ensure you installed llama.cpp with Metal (`brew install llama.cpp` does this automatically)
 - NVIDIA: verify `nvidia-smi` works and CUDA is installed
-- AMD: verify `rocm-smi` works; try setting `HSA_OVERRIDE_GFX_VERSION`
+- AMD: verify `rocm-smi` works; try setting `HSA_OVERRIDE_GFX_VERSION` in `.env`
 
 **Port conflict:**
 Edit `LLM_PORT` or `UI_PORT` at the top of `start.sh`.

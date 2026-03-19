@@ -1,0 +1,37 @@
+# ── Dependencies ─────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+
+# ── Frontend build output ────────────────────────────────────
+frontend/dist/
+frontend/build/
+frontend/.vite/
+
+# ── Models (large binary files) ──────────────────────────────
+models/
+*.gguf
+
+# ── Runtime logs ─────────────────────────────────────────────
+.llm.log
+.ui.log
+*.log
+
+# ── Docker build cache ───────────────────────────────────────
+.dockerignore
+
+# ── Environment / secrets ────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── OS / editor ──────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── llama.cpp build artifacts (if built locally) ─────────────
+llama.cpp/
+/tmp/llama-cpp-build/

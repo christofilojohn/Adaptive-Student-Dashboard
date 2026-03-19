@@ -10,6 +10,26 @@ echo -e "  Context:    ${LLM_CONTEXT}"
 echo -e "  Model:      ${MODEL_PATH}"
 echo ""
 
+# Download mode (must come before model existence check)
+if [[ "${1:-}" == "download-model" ]]; then
+    echo "Downloading Phi-3.5-mini-instruct..."
+    mkdir -p "$(dirname "$MODEL_PATH")"
+    if command -v wget &>/dev/null; then
+        wget -q --show-progress \
+            "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf" \
+            -O "$MODEL_PATH"
+    elif command -v curl &>/dev/null; then
+        curl -L --progress-bar \
+            "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf" \
+            -o "$MODEL_PATH"
+    else
+        echo -e "${RED}[✗] No download tool (wget/curl) found in container${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[✓] Model downloaded${NC}"
+    exit 0
+fi
+
 # Check model exists
 if [[ ! -f "$MODEL_PATH" ]]; then
     echo -e "${RED}[✗] Model not found at: $MODEL_PATH${NC}"
@@ -18,20 +38,8 @@ if [[ ! -f "$MODEL_PATH" ]]; then
     echo "  docker run -v /path/to/models:/models ..."
     echo ""
     echo "Or download the model first:"
-    echo "  docker run --rm -v /path/to/models:/models $IMAGE_NAME download-model"
+    echo "  docker compose --profile download run download-model"
     exit 1
-fi
-
-# Download mode
-if [[ "${1:-}" == "download-model" ]]; then
-    echo "Downloading Phi-3.5-mini-instruct..."
-    if command -v wget &>/dev/null; then
-        wget -q --show-progress \
-            "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf" \
-            -O "$MODEL_PATH"
-    fi
-    echo -e "${GREEN}[✓] Model downloaded${NC}"
-    exit 0
 fi
 
 echo -e "${GREEN}[✓] Model found: $(du -sh "$MODEL_PATH" | awk '{print $1}')${NC}"
