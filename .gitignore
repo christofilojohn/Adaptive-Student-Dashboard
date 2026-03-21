@@ -1,3 +1,4 @@
-/frontend
+frontend/dist
+frontend/node_modules
 .llm.log
 .ui.log

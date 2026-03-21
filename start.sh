@@ -251,7 +251,7 @@ start_llm() {
     fi
   done
   echo ""
-  warn "LLM server slow to start — check .llm.log if UI doesn't work"
+  err "LLM server did not start within the timeout. Check .llm.log:\n$(tail -20 "$SCRIPT_DIR/.llm.log")"
 }
 
 # ── Start frontend ───────────────────────────────────────────

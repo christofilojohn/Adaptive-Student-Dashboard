@@ -22,7 +22,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-RUN git clone --depth 1 https://github.com/ggerganov/llama.cpp .
+# Pinned to a stable release for reproducible builds.
+# To upgrade: update the tag and verify the -fa flag behaviour is unchanged.
+RUN git clone --depth 1 --branch b4887 https://github.com/ggerganov/llama.cpp .
 
 # Build flags per type
 ARG BUILD_TYPE=cuda
@@ -98,8 +100,9 @@ EOF
 
 # Supervisor to manage both processes
 COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
+COPY docker/run-llama.sh /docker/run-llama.sh
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /docker/run-llama.sh /entrypoint.sh
 
 EXPOSE 3000
 
