@@ -80,8 +80,10 @@ services:
     volumes:
       - ${MODEL_DIR:-./models}:/models
     command: >
-      sh -c '[ -f /models/Phi-3.5-mini-instruct-Q4_K_M.gguf ] && echo "Model already exists, skipping." ||
+      sh -c '[ -f /models/Phi-3.5-mini-instruct-Q4_K_M.gguf ] && echo "Model already exists, skipping." || (
         curl -L --no-silent
           "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf"
-          -o /models/Phi-3.5-mini-instruct-Q4_K_M.gguf'
+          -o /models/Phi-3.5-mini-instruct-Q4_K_M.gguf &&
+        echo "e4165e3a71af97f1b4820da61079826d8752a2088e313af0c7d346796c38eff5  /models/Phi-3.5-mini-instruct-Q4_K_M.gguf" | sha256sum -c -
+      )'
     profiles: [download]

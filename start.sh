@@ -28,10 +28,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_DIR="${DASHBOARD_MODEL_DIR:-$HOME/.cache/dashboard-models}"
 MODEL_FILE="Phi-3.5-mini-instruct-Q4_K_M.gguf"
 MODEL_REPO="bartowski/Phi-3.5-mini-instruct-GGUF"
+# SHA-256 of the expected model file.
+# To verify: sha256sum ~/.cache/dashboard-models/Phi-3.5-mini-instruct-Q4_K_M.gguf
+# Update this whenever the model file is intentionally replaced.
+MODEL_SHA256="e4165e3a71af97f1b4820da61079826d8752a2088e313af0c7d346796c38eff5"
 LLM_PORT=8080
 UI_PORT=5173
-CONTEXT=4096
-THREADS=4
+CONTEXT="${LLM_CONTEXT:-4096}"
+THREADS="${LLM_THREADS:-4}"
 
 # ── Cleanup on exit ──────────────────────────────────────────
 declare -a PIDS=()
@@ -204,6 +208,16 @@ EOF
   if [[ -f "$MODEL_PATH" ]]; then
     SIZE=$(du -sh "$MODEL_PATH" | awk '{print $1}')
     ok "Model downloaded: $MODEL_FILE ($SIZE)"
+    # Verify integrity
+    log "Verifying SHA-256..."
+    if command -v sha256sum &>/dev/null; then
+      echo "$MODEL_SHA256  $MODEL_PATH" | sha256sum -c - || err "SHA-256 mismatch — downloaded file may be corrupt. Remove it and re-run."
+    elif command -v shasum &>/dev/null; then  # macOS
+      echo "$MODEL_SHA256  $MODEL_PATH" | shasum -a 256 -c - || err "SHA-256 mismatch — downloaded file may be corrupt. Remove it and re-run."
+    else
+      warn "sha256sum/shasum not found — skipping integrity check"
+    fi
+    ok "Integrity check passed"
   else
     err "Model download failed. Try manually placing the GGUF in: $MODEL_DIR"
   fi
@@ -264,7 +278,7 @@ start_frontend() {
 
     if [[ ! -d "node_modules" ]]; then
       log "Installing npm dependencies (first run)..."
-      npm install --silent
+      npm ci --silent
       ok "Dependencies installed"
     fi
 
