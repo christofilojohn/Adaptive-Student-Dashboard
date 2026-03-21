@@ -177,16 +177,17 @@ ensure_model() {
       --local-dir "$MODEL_DIR" --local-dir-use-symlinks False
   # Try python hf_hub
   elif command -v python3 &>/dev/null && python3 -c "import huggingface_hub" 2>/dev/null; then
-    python3 -c "
+    python3 - "$MODEL_REPO" "$MODEL_FILE" "$MODEL_DIR" << 'EOF'
+import sys
 from huggingface_hub import hf_hub_download
 print('Downloading via huggingface_hub...')
 path = hf_hub_download(
-  repo_id='$MODEL_REPO',
-  filename='$MODEL_FILE',
-  local_dir='$MODEL_DIR'
+  repo_id=sys.argv[1],
+  filename=sys.argv[2],
+  local_dir=sys.argv[3]
 )
 print(f'Saved to: {path}')
-"
+EOF
   # Fallback: curl (macOS always has it) or wget
   else
     HF_URL="https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/$MODEL_FILE"

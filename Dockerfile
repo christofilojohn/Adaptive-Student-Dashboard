@@ -41,7 +41,8 @@ RUN if [ "$BUILD_TYPE" = "cuda" ]; then \
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci --silent
+# TODO: revert to `npm ci --silent` once frontend/package-lock.json is committed
+RUN npm install --silent
 COPY frontend/ ./
 RUN npm run build
 
