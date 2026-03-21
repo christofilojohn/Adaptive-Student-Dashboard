@@ -2,7 +2,7 @@
 # ╔══════════════════════════════════════════════════════════╗
 # ║         Adaptive Dashboard — Universal Launcher          ║
 # ║   Auto-detects: Apple Silicon | NVIDIA | AMD | CPU      ║
-# ╚══════════════════════════════════════════════════════════╝
+# ╚════════════════════════════════════════════════════════╝
 
 set -eo pipefail
 
@@ -226,7 +226,7 @@ start_llm() {
     -ngl $NGL \
     -t $THREADS \
     --port $LLM_PORT \
-    --host 0.0.0.0 \
+    --host 127.0.0.1 \
     $FA_FLAG \
     --log-disable \
     > "$SCRIPT_DIR/.llm.log" 2>&1 &
