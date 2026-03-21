@@ -47,11 +47,22 @@ try_prebuilt() {
     CUDA_VER=$(nvidia-smi | grep "CUDA Version" | awk '{print $9}' | cut -d'.' -f1 || echo "12")
     log "Fetching latest llama.cpp release for CUDA $CUDA_VER..."
     LATEST=$(curl -s https://api.github.com/repos/ggerganov/llama.cpp/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
-    BINARY_URL="https://github.com/ggerganov/llama.cpp/releases/download/${LATEST}/llama-${LATEST}-bin-ubuntu-x64-cuda-cu${CUDA_VER}.tar.gz"
+    TARBALL="llama-${LATEST}-bin-ubuntu-x64-cuda-cu${CUDA_VER}.tar.gz"
+    BINARY_URL="https://github.com/ggerganov/llama.cpp/releases/download/${LATEST}/${TARBALL}"
+    SHA_URL="https://github.com/ggerganov/llama.cpp/releases/download/${LATEST}/sha256sum.txt"
     if curl --head -sf "$BINARY_URL" &>/dev/null; then
       log "Downloading pre-built binary: $BINARY_URL"
       mkdir -p "$BUILD_DIR"
-      curl -L "$BINARY_URL" | tar xz -C "$BUILD_DIR"
+      curl -L -o "$BUILD_DIR/$TARBALL" "$BINARY_URL"
+      # Verify against the release's published SHA-256 manifest
+      if curl -sf "$SHA_URL" -o "$BUILD_DIR/sha256sum.txt"; then
+        grep "$TARBALL" "$BUILD_DIR/sha256sum.txt" | (cd "$BUILD_DIR" && sha256sum -c -) \
+          || err "SHA-256 mismatch for $TARBALL — aborting install"
+        log "Archive integrity verified"
+      else
+        warn "sha256sum.txt not found for this release — skipping archive verification"
+      fi
+      tar xz -C "$BUILD_DIR" -f "$BUILD_DIR/$TARBALL"
       LLAMA_BIN=$(find "$BUILD_DIR" -name "llama-server" -type f | head -1)
       if [[ -z "$LLAMA_BIN" ]]; then
         err "llama-server binary not found in downloaded archive"

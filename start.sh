@@ -165,23 +165,18 @@ ensure_model() {
   mkdir -p "$MODEL_DIR"
   MODEL_PATH="$MODEL_DIR/$MODEL_FILE"
 
-  if [[ -f "$MODEL_PATH" ]]; then
-    SIZE=$(du -sh "$MODEL_PATH" | awk '{print $1}')
-    ok "Model ready: $MODEL_FILE ($SIZE)"
-    return
-  fi
+  if [[ ! -f "$MODEL_PATH" ]]; then
+    log "Model not found. Downloading Phi-3.5-mini-instruct Q4_K_M (~2.4GB)..."
+    echo -e "${YELLOW}  This only happens once. Location: $MODEL_DIR${NC}"
+    echo ""
 
-  log "Model not found. Downloading Phi-3.5-mini-instruct Q4_K_M (~2.4GB)..."
-  echo -e "${YELLOW}  This only happens once. Location: $MODEL_DIR${NC}"
-  echo ""
-
-  # Try huggingface-cli (only if it supports 'download' subcommand — v0.16+)
-  if command -v huggingface-cli &>/dev/null && huggingface-cli download --help &>/dev/null 2>&1; then
-    huggingface-cli download "$MODEL_REPO" "$MODEL_FILE" \
-      --local-dir "$MODEL_DIR" --local-dir-use-symlinks False
-  # Try python hf_hub
-  elif command -v python3 &>/dev/null && python3 -c "import huggingface_hub" 2>/dev/null; then
-    python3 - "$MODEL_REPO" "$MODEL_FILE" "$MODEL_DIR" << 'EOF'
+    # Try huggingface-cli (only if it supports 'download' subcommand — v0.16+)
+    if command -v huggingface-cli &>/dev/null && huggingface-cli download --help &>/dev/null 2>&1; then
+      huggingface-cli download "$MODEL_REPO" "$MODEL_FILE" \
+        --local-dir "$MODEL_DIR" --local-dir-use-symlinks False
+    # Try python hf_hub
+    elif command -v python3 &>/dev/null && python3 -c "import huggingface_hub" 2>/dev/null; then
+      python3 - "$MODEL_REPO" "$MODEL_FILE" "$MODEL_DIR" << 'EOF'
 import sys
 from huggingface_hub import hf_hub_download
 print('Downloading via huggingface_hub...')
@@ -192,35 +187,37 @@ path = hf_hub_download(
 )
 print(f'Saved to: {path}')
 EOF
-  # Fallback: curl (macOS always has it) or wget
-  else
-    HF_URL="https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/$MODEL_FILE"
-    if command -v curl &>/dev/null; then
-      log "Downloading via curl..."
-      curl -L --progress-bar -o "$MODEL_PATH" "$HF_URL"
-    elif command -v wget &>/dev/null; then
-      wget --show-progress -O "$MODEL_PATH" "$HF_URL"
+    # Fallback: curl (macOS always has it) or wget
     else
-      err "No download tool found. Run: pip install huggingface-hub  then re-run this script."
+      HF_URL="https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/$MODEL_FILE"
+      if command -v curl &>/dev/null; then
+        log "Downloading via curl..."
+        curl -L --progress-bar -o "$MODEL_PATH" "$HF_URL"
+      elif command -v wget &>/dev/null; then
+        wget --show-progress -O "$MODEL_PATH" "$HF_URL"
+      else
+        err "No download tool found. Run: pip install huggingface-hub  then re-run this script."
+      fi
     fi
+
+    if [[ ! -f "$MODEL_PATH" ]]; then
+      err "Model download failed. Try manually placing the GGUF in: $MODEL_DIR"
+    fi
+    ok "Model downloaded: $MODEL_FILE ($(du -sh "$MODEL_PATH" | awk '{print $1}'))"
+  else
+    ok "Model ready: $MODEL_FILE ($(du -sh "$MODEL_PATH" | awk '{print $1}'))"
   fi
 
-  if [[ -f "$MODEL_PATH" ]]; then
-    SIZE=$(du -sh "$MODEL_PATH" | awk '{print $1}')
-    ok "Model downloaded: $MODEL_FILE ($SIZE)"
-    # Verify integrity
-    log "Verifying SHA-256..."
-    if command -v sha256sum &>/dev/null; then
-      echo "$MODEL_SHA256  $MODEL_PATH" | sha256sum -c - || err "SHA-256 mismatch — downloaded file may be corrupt. Remove it and re-run."
-    elif command -v shasum &>/dev/null; then  # macOS
-      echo "$MODEL_SHA256  $MODEL_PATH" | shasum -a 256 -c - || err "SHA-256 mismatch — downloaded file may be corrupt. Remove it and re-run."
-    else
-      warn "sha256sum/shasum not found — skipping integrity check"
-    fi
-    ok "Integrity check passed"
+  # Always verify integrity — covers pre-existing and freshly downloaded files
+  log "Verifying SHA-256..."
+  if command -v sha256sum &>/dev/null; then
+    echo "$MODEL_SHA256  $MODEL_PATH" | sha256sum -c - || err "SHA-256 mismatch — file may be corrupt. Remove it and re-run."
+  elif command -v shasum &>/dev/null; then  # macOS
+    echo "$MODEL_SHA256  $MODEL_PATH" | shasum -a 256 -c - || err "SHA-256 mismatch — file may be corrupt. Remove it and re-run."
   else
-    err "Model download failed. Try manually placing the GGUF in: $MODEL_DIR"
+    warn "sha256sum/shasum not found — skipping integrity check"
   fi
+  ok "Integrity check passed"
 }
 
 # ── Start llama-server ───────────────────────────────────────
