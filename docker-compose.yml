@@ -84,7 +84,8 @@ services:
     volumes:
       - ${MODEL_DIR:-./models}:/models
     command: >
-      curl -L --progress-bar
-        "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf"
-        -o /models/Phi-3.5-mini-instruct-Q4_K_M.gguf
+      sh -c '[ -f /models/Phi-3.5-mini-instruct-Q4_K_M.gguf ] && echo "Model already exists, skipping." ||
+        curl -L --progress-bar
+          "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf"
+          -o /models/Phi-3.5-mini-instruct-Q4_K_M.gguf'
     profiles: [download]

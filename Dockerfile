@@ -58,7 +58,11 @@ RUN apt-get update && apt-get install -y \
 
 # CUDA runtime libs (only needed for cuda builds)
 RUN if [ "$BUILD_TYPE" = "cuda" ]; then \
-    apt-get update && apt-get install -y libcublas-12-2 && rm -rf /var/lib/apt/lists/* ; \
+    apt-get update && apt-get install -y curl gnupg && \
+    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub | gpg --dearmor -o /usr/share/keyrings/cuda-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" > /etc/apt/sources.list.d/cuda.list && \
+    apt-get update && apt-get install -y libcublas-12-2 && \
+    rm -rf /var/lib/apt/lists/* ; \
     fi
 
 # Copy llama-server binary
@@ -93,7 +97,7 @@ server {
 EOF
 
 # Supervisor to manage both processes
-COPY docker/supervisord.conf /etc/supervisor/conf.d/dashboard.conf
+COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

@@ -83,7 +83,7 @@ build_from_source() {
   log "Building for platform: $PLATFORM"
   case "$PLATFORM" in
     macos-metal)
-      cmake -B build -DLLAMA_METAL=ON -DCMAKE_BUILD_TYPE=Release
+      cmake -B build -DGGML_METAL=ON -DCMAKE_BUILD_TYPE=Release
       ;;
     linux-cuda)
       cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release
