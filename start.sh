@@ -90,7 +90,6 @@ detect_gpu() {
     AMD=$(lspci 2>/dev/null | grep -i "AMD\|Radeon" | grep -i "VGA\|3D\|Display" | head -1 || true)
     if [[ -n "$AMD" ]]; then
       GPU_TYPE="amd"
-      NGL=999
       warn "AMD GPU found (ROCm not installed — using CPU offload): $AMD"
       NGL=0  # safe fallback if no ROCm
       return
@@ -283,6 +282,11 @@ start_frontend() {
       return
     fi
     echo -n "."
+    # Check if process died early (e.g. port in use, missing dep)
+    if ! kill -0 "$UI_PID" 2>/dev/null; then
+      echo ""
+      err "Frontend process crashed. Check .ui.log:\n$(tail -20 "$SCRIPT_DIR/.ui.log")"
+    fi
   done
   echo ""
   warn "UI slow to start — check .ui.log"

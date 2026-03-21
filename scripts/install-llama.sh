@@ -52,7 +52,11 @@ try_prebuilt() {
       log "Downloading pre-built binary: $BINARY_URL"
       mkdir -p "$BUILD_DIR"
       curl -L "$BINARY_URL" | tar xz -C "$BUILD_DIR"
-      sudo cp "$BUILD_DIR"/llama-server "$INSTALL_DIR/"
+      LLAMA_BIN=$(find "$BUILD_DIR" -name "llama-server" -type f | head -1)
+      if [[ -z "$LLAMA_BIN" ]]; then
+        err "llama-server binary not found in downloaded archive"
+      fi
+      sudo cp "$LLAMA_BIN" "$INSTALL_DIR/"
       sudo chmod +x "$INSTALL_DIR/llama-server"
       ok "llama-server installed to $INSTALL_DIR"
       exit 0

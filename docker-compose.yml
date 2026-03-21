@@ -13,10 +13,6 @@ x-common: &common
     - "3000:3000"
   volumes:
     - ${MODEL_DIR:-./models}:/models:ro
-  environment:
-    - MODEL_PATH=/models/Phi-3.5-mini-instruct-Q4_K_M.gguf
-    - LLM_CONTEXT=${LLM_CONTEXT:-4096}
-    - LLM_THREADS=${LLM_THREADS:-4}
   restart: unless-stopped
 
 services:
