@@ -5,7 +5,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 // ═══════════════════════════════════════════════════
 const LLM_CONFIG = {
     mode: "local",
-    local_url: "http://localhost:8080/v1/chat/completions",
+    local_url: "/v1/chat/completions",
     local_model: "phi-3.5-mini-instruct",
 };
 const POSTIT_CHAR_LIMIT = 120;
@@ -158,11 +158,7 @@ async function fetchLLM(systemPrompt, userMsg, signal, maxTok = 500) {
         });
         return (await r.json()).choices?.[0]?.message?.content || "{}";
     } else {
-        const r = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST", signal, headers: { "Content-Type": "application/json", "x-api-key": "", "anthropic-version": "2023-06-01" },
-            body: JSON.stringify({ model: "claude-3-5-sonnet-20240620", max_tokens: maxTok, system: systemPrompt, messages: [{ role: "user", content: userMsg }] })
-        });
-        return ((await r.json()).content || []).map(b => b.text || "").join("");
+        throw new Error("Cloud fallback must be implemented server-side.");
     }
 }
 

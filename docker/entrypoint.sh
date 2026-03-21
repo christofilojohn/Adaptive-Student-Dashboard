@@ -13,11 +13,13 @@ echo ""
 # Download mode — must be checked BEFORE the model-existence guard
 if [[ "${1:-}" == "download-model" ]]; then
     echo "Downloading Phi-3.5-mini-instruct..."
-    if command -v wget &>/dev/null; then
-        wget -q --show-progress \
-            "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf" \
-            -O "$MODEL_PATH"
+    if ! command -v wget &>/dev/null; then
+        echo -e "${RED}[✗] wget is required but not found in PATH${NC}"
+        exit 1
     fi
+    wget -q --show-progress \
+        "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf" \
+        -O "$MODEL_PATH"
     echo -e "${GREEN}[✓] Model downloaded${NC}"
     exit 0
 fi
