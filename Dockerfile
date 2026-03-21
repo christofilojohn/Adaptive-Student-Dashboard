@@ -29,11 +29,11 @@ RUN git clone --depth 1 --branch b4887 https://github.com/ggerganov/llama.cpp .
 # Build flags per type
 ARG BUILD_TYPE=cuda
 RUN if [ "$BUILD_TYPE" = "cuda" ]; then \
-      cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release -GNinja; \
+    cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release -GNinja; \
     elif [ "$BUILD_TYPE" = "rocm" ]; then \
-      cmake -B build -DGGML_HIP=ON -DCMAKE_BUILD_TYPE=Release -GNinja; \
+    cmake -B build -DGGML_HIP=ON -DCMAKE_BUILD_TYPE=Release -GNinja; \
     else \
-      cmake -B build -DCMAKE_BUILD_TYPE=Release -GNinja; \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release -GNinja; \
     fi \
     && cmake --build build --target llama-server
 
@@ -41,8 +41,7 @@ RUN if [ "$BUILD_TYPE" = "cuda" ]; then \
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json* ./
-# TODO: revert to `npm ci --silent` once frontend/package-lock.json is committed
-RUN npm install --silent
+RUN npm ci --silent
 COPY frontend/ ./
 RUN npm run build
 
@@ -78,24 +77,24 @@ COPY --from=frontend-builder /app/dist /var/www/dashboard
 # Nginx config to serve frontend + proxy LLM API
 RUN cat > /etc/nginx/sites-enabled/default << 'EOF'
 server {
-    listen 3000;
-    root /var/www/dashboard;
-    index index.html;
+listen 3000;
+root /var/www/dashboard;
+index index.html;
 
-    location /v1/ {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host $host;
-        proxy_read_timeout 300s;
-        proxy_buffering off;
-    }
+location /v1/ {
+proxy_pass http://127.0.0.1:8080;
+proxy_set_header Host $host;
+proxy_read_timeout 300s;
+proxy_buffering off;
+}
 
-    location /health {
-        proxy_pass http://127.0.0.1:8080/health;
-    }
+location /health {
+proxy_pass http://127.0.0.1:8080/health;
+}
 
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
+location / {
+try_files $uri $uri/ /index.html;
+}
 }
 EOF
 
