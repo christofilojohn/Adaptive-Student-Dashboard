@@ -156,6 +156,7 @@ async function fetchLLM(systemPrompt, userMsg, signal, maxTok = 500) {
             method: "POST", signal, headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model: LLM_CONFIG.local_model, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMsg }], temperature: 0.3, max_tokens: maxTok, response_format: { type: "json_object" } })
         });
+        if (!r.ok) throw new Error(`LLM server error: ${r.status} ${r.statusText}`);
         return (await r.json()).choices?.[0]?.message?.content || "{}";
     } else {
         throw new Error("Cloud fallback must be implemented server-side.");
@@ -177,6 +178,7 @@ async function callLLM(msg, state) {
     } catch (e) {
         chatCtrl = null;
         if (e?.name === "AbortError") return { actions: [], reply: "" };
+        console.error("[LLM error]", e);
         return { actions: [], reply: "Couldn't process that — try rephrasing?" };
     }
 }

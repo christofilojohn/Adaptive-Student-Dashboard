@@ -259,15 +259,17 @@ start_frontend() {
   FRONTEND_DIR="$SCRIPT_DIR/frontend"
   log "Starting frontend..."
 
-  cd "$FRONTEND_DIR"
+  (
+    cd "$FRONTEND_DIR"
 
-  if [[ ! -d "node_modules" ]]; then
-    log "Installing npm dependencies (first run)..."
-    npm install --silent
-    ok "Dependencies installed"
-  fi
+    if [[ ! -d "node_modules" ]]; then
+      log "Installing npm dependencies (first run)..."
+      npm install --silent
+      ok "Dependencies installed"
+    fi
 
-  npm run dev > "$SCRIPT_DIR/.ui.log" 2>&1 &
+    npm run dev > "$SCRIPT_DIR/.ui.log" 2>&1
+  ) &
   UI_PID=$!
   PIDS+=($UI_PID)
 
