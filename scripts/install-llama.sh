@@ -19,7 +19,7 @@ detect_platform() {
 
   if [[ "$OS" == "Darwin" && "$ARCH" == "arm64" ]]; then
     PLATFORM="macos-metal"
-  elif command -v nvidia-smi &>/dev/null 2>&1; then
+  elif command -v nvidia-smi &>/dev/null; then
     PLATFORM="linux-cuda"
   elif [[ -d /opt/rocm ]]; then
     PLATFORM="linux-rocm"

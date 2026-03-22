@@ -5,6 +5,7 @@
 # ╚════════════════════════════════════════════════════════╝
 
 set -euo pipefail
+set -m  # enable job control so each background job gets its own process group
 
 # ── Colors ──────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -44,7 +45,7 @@ cleanup() {
   log "Shutting down..."
   if [[ ${#PIDS[@]} -gt 0 ]]; then
     for pid in "${PIDS[@]}"; do
-      kill "$pid" 2>/dev/null || true
+      kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
     done
   fi
   wait 2>/dev/null || true
@@ -172,7 +173,7 @@ ensure_model() {
     echo ""
 
     # Try huggingface-cli (only if it supports 'download' subcommand — v0.16+)
-    if command -v huggingface-cli &>/dev/null && huggingface-cli download --help &>/dev/null 2>&1; then
+    if command -v huggingface-cli &>/dev/null && huggingface-cli download --help &>/dev/null; then
       huggingface-cli download "$MODEL_REPO" "$MODEL_FILE" \
         --local-dir "$MODEL_DIR" --local-dir-use-symlinks False
     # Try python hf_hub
