@@ -17,8 +17,7 @@ export default defineConfig({
     proxy: {
       '/v1': {
         target: `http://localhost:${LLM_PORT}`,
-        changeOrigin: true,
-        rewrite: (path) => path
+        changeOrigin: true
       }
     }
   }

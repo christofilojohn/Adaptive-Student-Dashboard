@@ -27,7 +27,7 @@ services:
       - MODEL_PATH=/models/Phi-3.5-mini-instruct-Q4_K_M.gguf
       - LLM_CONTEXT=${LLM_CONTEXT:-4096}
       - LLM_THREADS=${LLM_THREADS:-4}
-      - LLM_NGL=999
+      - LLM_NGL=${LLM_NGL:-999}
     deploy:
       resources:
         reservations:
@@ -49,7 +49,7 @@ services:
       - MODEL_PATH=/models/Phi-3.5-mini-instruct-Q4_K_M.gguf
       - LLM_CONTEXT=${LLM_CONTEXT:-4096}
       - LLM_THREADS=${LLM_THREADS:-4}
-      - LLM_NGL=999
+      - LLM_NGL=${LLM_NGL:-999}
       - HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-}
     devices:
       - /dev/kfd:/dev/kfd
@@ -71,7 +71,7 @@ services:
       - MODEL_PATH=/models/Phi-3.5-mini-instruct-Q4_K_M.gguf
       - LLM_CONTEXT=${LLM_CONTEXT:-4096}
       - LLM_THREADS=${LLM_THREADS:-8}
-      - LLM_NGL=0
+      - LLM_NGL=${LLM_NGL:-0}
     profiles: [cpu]
 
   # ── Model downloader (one-shot utility) ─────────────────
@@ -92,9 +92,7 @@ services:
           echo "Integrity check failed — re-downloading..."
           rm -f "$MODEL"
         fi
-        curl -L --no-silent
-          "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf"
-          -o "$MODEL" &&
+        curl -fSL "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf" -o "$MODEL" &&
         echo "$SHA  $MODEL" | sha256sum -c - ||
           { rm -f "$MODEL"; echo "SHA256 mismatch — corrupt file removed"; exit 1; }
       '
