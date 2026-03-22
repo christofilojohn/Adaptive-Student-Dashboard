@@ -42,14 +42,14 @@ try_prebuilt() {
     exit 0
   fi
 
-  # GitHub release (Linux CUDA)
+  # GitHub release (Linux CUDA) — pinned to b4887 to match the source-build fallback
   if [[ "$PLATFORM" == "linux-cuda" ]]; then
     CUDA_VER=$(nvidia-smi | grep "CUDA Version" | awk '{print $9}' | cut -d'.' -f1 || echo "12")
-    log "Fetching latest llama.cpp release for CUDA $CUDA_VER..."
-    LATEST=$(curl -s https://api.github.com/repos/ggerganov/llama.cpp/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
-    TARBALL="llama-${LATEST}-bin-ubuntu-x64-cuda-cu${CUDA_VER}.tar.gz"
-    BINARY_URL="https://github.com/ggerganov/llama.cpp/releases/download/${LATEST}/${TARBALL}"
-    SHA_URL="https://github.com/ggerganov/llama.cpp/releases/download/${LATEST}/sha256sum.txt"
+    PINNED_TAG="b4887"
+    log "Downloading llama.cpp $PINNED_TAG pre-built binary for CUDA $CUDA_VER..."
+    TARBALL="llama-${PINNED_TAG}-bin-ubuntu-x64-cuda-cu${CUDA_VER}.tar.gz"
+    BINARY_URL="https://github.com/ggerganov/llama.cpp/releases/download/${PINNED_TAG}/${TARBALL}"
+    SHA_URL="https://github.com/ggerganov/llama.cpp/releases/download/${PINNED_TAG}/sha256sum.txt"
     if curl --head -sf "$BINARY_URL" &>/dev/null; then
       log "Downloading pre-built binary: $BINARY_URL"
       mkdir -p "$BUILD_DIR"

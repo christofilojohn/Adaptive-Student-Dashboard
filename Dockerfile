@@ -67,6 +67,17 @@ RUN if [ "$BUILD_TYPE" = "cuda" ]; then \
     rm -rf /var/lib/apt/lists/* ; \
     fi
 
+# ROCm runtime libs (only needed for rocm/amd builds)
+# libhip.so and libamdhip64.so are required by a HIP-compiled llama-server
+RUN if [ "$BUILD_TYPE" = "rocm" ]; then \
+    apt-get update && apt-get install -y wget gnupg && \
+    mkdir -p --mode=0755 /usr/share/keyrings && \
+    wget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor -o /usr/share/keyrings/rocm-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/rocm-archive-keyring.gpg] https://repo.radeon.com/rocm/apt/6.1 jammy main" > /etc/apt/sources.list.d/rocm.list && \
+    apt-get update && apt-get install -y rocm-hip-runtime && \
+    rm -rf /var/lib/apt/lists/* ; \
+    fi
+
 # Copy llama-server binary
 COPY --from=builder /build/build/bin/llama-server /usr/local/bin/llama-server
 RUN chmod +x /usr/local/bin/llama-server

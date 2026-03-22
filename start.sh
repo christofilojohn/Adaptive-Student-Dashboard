@@ -102,7 +102,8 @@ detect_gpu() {
 
   warn "No GPU detected — running on CPU (slower)"
   NGL=0
-  THREADS=8
+  # Use user-supplied LLM_THREADS if set; otherwise default to 8 for CPU mode
+  THREADS="${LLM_THREADS:-8}"
 }
 
 # ── Dependency checks ────────────────────────────────────────
