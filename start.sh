@@ -323,6 +323,10 @@ open_browser() {
 main() {
   banner
   detect_gpu
+  # Honour explicit LLM_NGL override from .env / shell environment (applies to all GPU types)
+  if [[ -n "${LLM_NGL:-}" ]]; then
+    NGL="$LLM_NGL"
+  fi
   check_deps
   ensure_model
   echo ""
