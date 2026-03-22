@@ -60,7 +60,7 @@ try_prebuilt() {
           || err "SHA-256 mismatch for $TARBALL — aborting install"
         log "Archive integrity verified"
       else
-        err "Could not fetch sha256sum.txt for release $LATEST — aborting to prevent installing an unverified binary"
+        err "Could not fetch sha256sum.txt for release $PINNED_TAG — aborting to prevent installing an unverified binary"
       fi
       tar xz -C "$BUILD_DIR" -f "$BUILD_DIR/$TARBALL"
       LLAMA_BIN=$(find "$BUILD_DIR" -name "llama-server" -type f | head -1)
