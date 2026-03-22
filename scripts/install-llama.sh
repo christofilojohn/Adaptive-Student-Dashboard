@@ -54,13 +54,13 @@ try_prebuilt() {
       log "Downloading pre-built binary: $BINARY_URL"
       mkdir -p "$BUILD_DIR"
       curl -L -o "$BUILD_DIR/$TARBALL" "$BINARY_URL"
-      # Verify against the release's published SHA-256 manifest
+      # Verify against the release's published SHA-256 manifest (mandatory)
       if curl -sf "$SHA_URL" -o "$BUILD_DIR/sha256sum.txt"; then
         grep "$TARBALL" "$BUILD_DIR/sha256sum.txt" | (cd "$BUILD_DIR" && sha256sum -c -) \
           || err "SHA-256 mismatch for $TARBALL — aborting install"
         log "Archive integrity verified"
       else
-        warn "sha256sum.txt not found for this release — skipping archive verification"
+        err "Could not fetch sha256sum.txt for release $LATEST — aborting to prevent installing an unverified binary"
       fi
       tar xz -C "$BUILD_DIR" -f "$BUILD_DIR/$TARBALL"
       LLAMA_BIN=$(find "$BUILD_DIR" -name "llama-server" -type f | head -1)
