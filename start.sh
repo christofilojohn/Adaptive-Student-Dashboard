@@ -249,7 +249,7 @@ start_llm() {
 
   # Wait for server to be ready
   echo -n "  Waiting for LLM server"
-  for i in $(seq 1 40); do
+  for i in $(seq 1 120); do
     sleep 0.75
     if curl -sf "http://localhost:$LLM_PORT/health" &>/dev/null; then
       echo ""

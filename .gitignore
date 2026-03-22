@@ -3,3 +3,4 @@ frontend/node_modules
 .env
 .llm.log
 .ui.log
+models/
