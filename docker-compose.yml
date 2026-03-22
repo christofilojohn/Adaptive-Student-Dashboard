@@ -85,5 +85,6 @@ services:
           "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf"
           -o /models/Phi-3.5-mini-instruct-Q4_K_M.gguf &&
         echo "e4165e3a71af97f1b4820da61079826d8752a2088e313af0c7d346796c38eff5  /models/Phi-3.5-mini-instruct-Q4_K_M.gguf" | sha256sum -c -
+          || { rm -f /models/Phi-3.5-mini-instruct-Q4_K_M.gguf; echo "SHA256 mismatch — corrupt file removed"; exit 1; }
       )'
     profiles: [download]

@@ -90,8 +90,8 @@ build_from_source() {
   mkdir -p "$BUILD_DIR" && cd "$BUILD_DIR"
 
   if [[ ! -d "llama.cpp" ]]; then
-    log "Cloning llama.cpp..."
-    git clone --depth 1 https://github.com/ggerganov/llama.cpp
+    log "Cloning llama.cpp (pinned to b4887)..."
+    git clone --depth 1 --branch b4887 https://github.com/ggerganov/llama.cpp
   fi
   cd llama.cpp
 
