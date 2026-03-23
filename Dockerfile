@@ -73,7 +73,7 @@ RUN if [ "$BUILD_TYPE" = "rocm" ]; then \
     apt-get update && apt-get install -y wget gnupg && \
     mkdir -p --mode=0755 /usr/share/keyrings && \
     wget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor -o /usr/share/keyrings/rocm-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/rocm-archive-keyring.gpg] https://repo.radeon.com/rocm/apt/6.1 jammy main" > /etc/apt/sources.list.d/rocm.list && \
+    echo "deb [signed-by=/usr/share/keyrings/rocm-archive-keyring.gpg] https://repo.radeon.com/rocm/apt/5.7 jammy main" > /etc/apt/sources.list.d/rocm.list && \
     apt-get update && apt-get install -y rocm-hip-runtime && \
     rm -rf /var/lib/apt/lists/* ; \
     fi
