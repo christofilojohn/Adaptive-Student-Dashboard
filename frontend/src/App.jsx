@@ -5,11 +5,11 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 // ═══════════════════════════════════════════════════
 const LLM_CONFIG = {
     mode: "local",
-    local_url: "/v1/chat/completions",
+    local_url: "http://localhost:8080/v1/chat/completions",
     local_model: "phi-3.5-mini-instruct",
 };
 const POSTIT_CHAR_LIMIT = 120;
-const TASK_CHAR_LIMIT = 90;
+const TASK_CHAR_LIMIT = 80;
 
 // ═══════════════════════════════════════════════════
 // SMART EMOJI GUESSER
@@ -156,10 +156,13 @@ async function fetchLLM(systemPrompt, userMsg, signal, maxTok = 500) {
             method: "POST", signal, headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model: LLM_CONFIG.local_model, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMsg }], temperature: 0.3, max_tokens: maxTok, response_format: { type: "json_object" } })
         });
-        if (!r.ok) throw new Error(`LLM server error: ${r.status} ${r.statusText}`);
         return (await r.json()).choices?.[0]?.message?.content || "{}";
     } else {
-        throw new Error("Cloud fallback must be implemented server-side.");
+        const r = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST", signal, headers: { "Content-Type": "application/json", "x-api-key": "", "anthropic-version": "2023-06-01" },
+            body: JSON.stringify({ model: "claude-3-5-sonnet-20240620", max_tokens: maxTok, system: systemPrompt, messages: [{ role: "user", content: userMsg }] })
+        });
+        return ((await r.json()).content || []).map(b => b.text || "").join("");
     }
 }
 
@@ -170,13 +173,14 @@ async function callLLM(msg, state) {
     try {
         const raw = await fetchLLM(full, msg, chatCtrl.signal, 500);
         chatCtrl = null;
+        console.log("[LLM raw]", raw);
         const parsed = parseResponse(raw);
+        console.log("[LLM parsed]", parsed);
         if (parsed) return { actions: parsed.actions, reply: parsed.reply || "Done! ✨" };
         return { actions: [], reply: "Done! ✨" };
     } catch (e) {
         chatCtrl = null;
         if (e?.name === "AbortError") return { actions: [], reply: "" };
-        console.error("[LLM error]", e);
         return { actions: [], reply: "Couldn't process that — try rephrasing?" };
     }
 }
@@ -271,52 +275,52 @@ function Particles({ type, color }) {
 // LENNY BUDDY — mood-reactive animated character
 // ═══════════════════════════════════════════════════
 const LENNY_MOODS = [
-    { id: "cozy", face: "( ˘ ω ˘ )", label: "cozy" },
-    { id: "focus", face: "( •̀ᴗ•́ )", label: "locked in" },
+    { id: "cozy",       face: "( ˘ ω ˘ )", label: "cozy" },
+    { id: "focus",      face: "( •̀ᴗ•́ )", label: "locked in" },
     { id: "productive", face: "( •̀ᴗ•́ )و", label: "on it" },
-    { id: "energetic", face: "( ᗒ ᗨᗕ )", label: "hyped!" },
-    { id: "happy", face: "( ◠‿◠ )", label: "happy" },
-    { id: "calm", face: "( ◡ ‿ ◡ )", label: "at peace" },
-    { id: "creative", face: "( ☆ ᗜ ☆ )", label: "inspired" },
-    { id: "dreamy", face: "( ᵕ ꈊ ᵕ )", label: "dreamy" },
-    { id: "sleepy", face: "( ᴗ_ᴗ。)", label: "zzz" },
-    { id: "chill", face: "( ‾́ ◡ ‾́ )", label: "vibing" },
+    { id: "energetic",  face: "( ᗒ ᗨᗕ )", label: "hyped!" },
+    { id: "happy",      face: "( ◠‿◠ )", label: "happy" },
+    { id: "calm",       face: "( ◡ ‿ ◡ )", label: "at peace" },
+    { id: "creative",   face: "( ☆ ᗜ ☆ )", label: "inspired" },
+    { id: "dreamy",     face: "( ᵕ ꈊ ᵕ )", label: "dreamy" },
+    { id: "sleepy",     face: "( ᴗ_ᴗ。)", label: "zzz" },
+    { id: "chill",      face: "( ‾́ ◡ ‾́ )", label: "vibing" },
     { id: "mysterious", face: "( ¬‿¬ )", label: "hmm..." },
-    { id: "intense", face: "( ⊙ᗜ⊙ )", label: "intense" },
-    { id: "romantic", face: "( ♡ ᴗ ♡ )", label: "lovely" },
-    { id: "sad", face: "( ◞‸◟ )", label: "aw" },
-    { id: "stressed", face: "( ⊙﹏⊙ )", label: "eep" },
-    { id: "proud", face: "( ˙▿˙ )b", label: "nailed it" },
-    { id: "curious", face: "( ᐛ )", label: "curious" },
-    { id: "playful", face: "( ˙ᗜ˙ )", label: "wheee" },
-    { id: "ocean", face: "( ≧ᗜ≦ )~", label: "wave~" },
-    { id: "nature", face: "( ᵔ ᵕ ᵔ )", label: "nature" },
-    { id: "sunset", face: "( ◠ ꈊ ◠ )", label: "golden" },
-    { id: "neutral", face: "( ˘ ᵕ ˘ )", label: "chillin" },
+    { id: "intense",    face: "( ⊙ᗜ⊙ )", label: "intense" },
+    { id: "romantic",   face: "( ♡ ᴗ ♡ )", label: "lovely" },
+    { id: "sad",        face: "( ◞‸◟ )", label: "aw" },
+    { id: "stressed",   face: "( ⊙﹏⊙ )", label: "eep" },
+    { id: "proud",      face: "( ˙▿˙ )b", label: "nailed it" },
+    { id: "curious",    face: "( ᐛ )", label: "curious" },
+    { id: "playful",    face: "( ˙ᗜ˙ )", label: "wheee" },
+    { id: "ocean",      face: "( ≧ᗜ≦ )~", label: "wave~" },
+    { id: "nature",     face: "( ᵔ ᵕ ᵔ )", label: "nature" },
+    { id: "sunset",     face: "( ◠ ꈊ ◠ )", label: "golden" },
+    { id: "neutral",    face: "( ˘ ᵕ ˘ )", label: "chillin" },
 ];
 
 // Client-side mood inference — keyword patterns scored against user input + actions
 const MOOD_RULES = [
-    { mood: "proud", pattern: /\b(done|finished|completed|check off|nailed|shipped|deployed|crushed)\b/i, actionBoost: ["complete_task"] },
-    { mood: "stressed", pattern: /\b(stress|anxious|worried|panic|overwhelm|deadline|urgent|asap|behind)\b/i },
-    { mood: "sad", pattern: /\b(sad|upset|bad day|terrible|awful|depressed|lonely|miss|lost)\b/i },
-    { mood: "energetic", pattern: /\b(excited|hyped|amazing|awesome|fantastic|pumped|let'?s go|fire|hell yeah|insane)\b/i },
-    { mood: "happy", pattern: /\b(happy|great|wonderful|love it|perfect|yay|nice|good news|celebrate)\b/i },
-    { mood: "romantic", pattern: /\b(love|date|anniversary|valentine|romantic|heart|wedding|partner)\b/i },
-    { mood: "cozy", pattern: /\b(cozy|cosy|warm|comfort|snug|blanket|candle|tea|fireplace|hygge|homey)\b/i },
-    { mood: "focus", pattern: /\b(focus|concentrate|deep work|grind|lock in|study|exam|pomodoro|timer)\b/i, actionBoost: ["add_timer"] },
-    { mood: "creative", pattern: /\b(creat|design|art|sketch|paint|draw|brainstorm|inspir|imagin|idea|write|draft|blog)\b/i },
-    { mood: "sleepy", pattern: /\b(sleep|tired|exhaust|nap|rest|bedtime|late night|insomnia|zzz)\b/i },
-    { mood: "chill", pattern: /\b(chill|relax|laid back|vibe|mellow|easy|no rush|take it easy|wind down)\b/i },
-    { mood: "curious", pattern: /\b(wonder|curious|what if|how does|why|interest|explore|discover|learn)\b/i },
-    { mood: "playful", pattern: /\b(fun|play|game|silly|goofy|party|joke|lol|haha|😂|🎉)\b/i },
-    { mood: "intense", pattern: /\b(intense|serious|critical|important|power|determined|no excuses|push)\b/i },
-    { mood: "mysterious", pattern: /\b(mysteri|dark|midnight|shadow|secret|enigma|noir|spooky)\b/i },
-    { mood: "ocean", pattern: /\b(ocean|sea|water|wave|beach|surf|coast|marine|island)\b/i },
-    { mood: "nature", pattern: /\b(forest|nature|green|earth|garden|tree|plant|hike|mountain|outdoor)\b/i },
-    { mood: "sunset", pattern: /\b(sunset|sunrise|golden|dusk|twilight|dawn|horizon|sky)\b/i },
-    { mood: "dreamy", pattern: /\b(dream|whimsical|fantasy|magic|wonder|fairy|starry|wish)\b/i },
-    { mood: "calm", pattern: /\b(calm|serene|peaceful|tranquil|zen|meditat|mindful|breathe|quiet)\b/i },
+    { mood: "proud",      pattern: /\b(done|finished|completed|check off|nailed|shipped|deployed|crushed)\b/i, actionBoost: ["complete_task"] },
+    { mood: "stressed",   pattern: /\b(stress|anxious|worried|panic|overwhelm|deadline|urgent|asap|behind)\b/i },
+    { mood: "sad",        pattern: /\b(sad|upset|bad day|terrible|awful|depressed|lonely|miss|lost)\b/i },
+    { mood: "energetic",  pattern: /\b(excited|hyped|amazing|awesome|fantastic|pumped|let'?s go|fire|hell yeah|insane)\b/i },
+    { mood: "happy",      pattern: /\b(happy|great|wonderful|love it|perfect|yay|nice|good news|celebrate)\b/i },
+    { mood: "romantic",   pattern: /\b(love|date|anniversary|valentine|romantic|heart|wedding|partner)\b/i },
+    { mood: "cozy",       pattern: /\b(cozy|cosy|warm|comfort|snug|blanket|candle|tea|fireplace|hygge|homey)\b/i },
+    { mood: "focus",      pattern: /\b(focus|concentrate|deep work|grind|lock in|study|exam|pomodoro|timer)\b/i, actionBoost: ["add_timer"] },
+    { mood: "creative",   pattern: /\b(creat|design|art|sketch|paint|draw|brainstorm|inspir|imagin|idea|write|draft|blog)\b/i },
+    { mood: "sleepy",     pattern: /\b(sleep|tired|exhaust|nap|rest|bedtime|late night|insomnia|zzz)\b/i },
+    { mood: "chill",      pattern: /\b(chill|relax|laid back|vibe|mellow|easy|no rush|take it easy|wind down)\b/i },
+    { mood: "curious",    pattern: /\b(wonder|curious|what if|how does|why|interest|explore|discover|learn)\b/i },
+    { mood: "playful",    pattern: /\b(fun|play|game|silly|goofy|party|joke|lol|haha|😂|🎉)\b/i },
+    { mood: "intense",    pattern: /\b(intense|serious|critical|important|power|determined|no excuses|push)\b/i },
+    { mood: "mysterious",  pattern: /\b(mysteri|dark|midnight|shadow|secret|enigma|noir|spooky)\b/i },
+    { mood: "ocean",      pattern: /\b(ocean|sea|water|wave|beach|surf|coast|marine|island)\b/i },
+    { mood: "nature",     pattern: /\b(forest|nature|green|earth|garden|tree|plant|hike|mountain|outdoor)\b/i },
+    { mood: "sunset",     pattern: /\b(sunset|sunrise|golden|dusk|twilight|dawn|horizon|sky)\b/i },
+    { mood: "dreamy",     pattern: /\b(dream|whimsical|fantasy|magic|wonder|fairy|starry|wish)\b/i },
+    { mood: "calm",       pattern: /\b(calm|serene|peaceful|tranquil|zen|meditat|mindful|breathe|quiet)\b/i },
     { mood: "productive", pattern: /\b(productive|efficient|organize|plan|schedule|manage|priorit|todo|task)\b/i, actionBoost: ["add_task", "split_task"] },
 ];
 
@@ -845,6 +849,7 @@ export default function App() {
     const ambientBg = ambient.glowIntensity > 0 ? `radial-gradient(ellipse at 30% 40%, ${safeAmbientGlowColor}${Math.round(ambient.glowIntensity * 255).toString(16).padStart(2, "0")} 0%, transparent 70%)` : "none";
 
     return <>
+        <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,700;1,400&family=JetBrains+Mono:wght@200;400;600;700&display=swap" rel="stylesheet" />
         <style>{`
             @keyframes bk{0%,60%,100%{transform:translateY(0);opacity:.3}30%{transform:translateY(-5px);opacity:.8}}
             @keyframes ff{0%,100%{transform:translate(0,0);opacity:.15}25%{transform:translate(12px,-18px);opacity:.5}50%{transform:translate(-8px,-30px);opacity:.2}75%{transform:translate(15px,-10px);opacity:.45}}
