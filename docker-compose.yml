@@ -10,7 +10,9 @@
 x-common: &common
   image: adaptive-dashboard
   ports:
-    - "3000:3000"
+    # Bound to loopback by default — remove "127.0.0.1:" to allow LAN access.
+    # WARNING: /v1/* is unauthenticated; do not expose to untrusted networks.
+    - "127.0.0.1:3000:3000"
   volumes:
     - ${MODEL_DIR:-./models}:/models:ro
   restart: unless-stopped

@@ -91,6 +91,8 @@ server {
 listen 3000;
 root /var/www/dashboard;
 index index.html;
+# State JSON in LLM prompts can exceed nginx's 1 MB default
+client_max_body_size 10M;
 
 location /v1/ {
 proxy_pass http://127.0.0.1:8080;

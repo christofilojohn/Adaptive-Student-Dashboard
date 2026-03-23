@@ -722,7 +722,7 @@ export default function App() {
     const [lennyMood, setLennyMood] = useState("neutral");
     const [msgs, setMsgs] = useState([{ role: "assistant", text: `Ready! (${LLM_CONFIG.mode === "local" ? "local LLM" : "API"})\n\n• "make it cozy"\n• "check off documentation"\n• "meeting this friday 2pm"\n• "I spent €12 on lunch"\n• "focus mode"` }]);
 
-    const scrollRef = useRef(null), inputRef = useRef(null), idRef = useRef(300);
+    const scrollRef = useRef(null), inputRef = useRef(null), idRef = useRef(300), ambientTimerRef = useRef(null);
     const gid = () => `i${idRef.current++}`;
     useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, loading]);
 
@@ -824,10 +824,16 @@ export default function App() {
                 // Still fire ambient for visual effects (particles/glow) if no ambient action came back
                 const hasAmbient = r.actions.some(a => a.type === "adjust_ambient");
                 if (!hasAmbient) {
-                    callAmbientLLM(`User said: "${txt}". Actions taken: ${r.actions.map(a => a.type).join(", ") || "none"}. Emotional weight?`).then(ar => {
-                        const safe = (ar.actions || []).filter(a => a.type === "adjust_ambient");
-                        if (safe.length) exec(safe);
-                    });
+                    // Debounce: fire after main reply is rendered to avoid queuing
+                    // behind the primary inference call on the serial llama-server.
+                    clearTimeout(ambientTimerRef.current);
+                    const ambientMsg = `User said: "${txt}". Actions taken: ${r.actions.map(a => a.type).join(", ") || "none"}. Emotional weight?`;
+                    ambientTimerRef.current = setTimeout(() => {
+                        callAmbientLLM(ambientMsg).then(ar => {
+                            const safe = (ar.actions || []).filter(a => a.type === "adjust_ambient");
+                            if (safe.length) exec(safe);
+                        });
+                    }, 1500);
                 }
             }
         } catch {
