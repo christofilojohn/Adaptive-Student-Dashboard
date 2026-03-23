@@ -1,7 +1,11 @@
 #!/bin/bash
 set -e
 
-MODEL_SHA256="e4165e3a71af97f1b4820da61079826d8752a2088e313af0c7d346796c38eff5"
+# Default SHA-256 for the bundled Phi-3.5-mini model.
+# Override via MODEL_SHA256 env var when mounting a different model file.
+DEFAULT_MODEL_FILE="Phi-3.5-mini-instruct-Q4_K_M.gguf"
+DEFAULT_SHA256="e4165e3a71af97f1b4820da61079826d8752a2088e313af0c7d346796c38eff5"
+MODEL_SHA256="${MODEL_SHA256:-}"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 
 echo -e "${CYAN}[dashboard]${NC} Starting Adaptive Dashboard container..."
@@ -40,13 +44,28 @@ if [[ ! -f "$MODEL_PATH" ]]; then
 fi
 
 echo -e "${GREEN}[✓] Model found: $(du -sh "$MODEL_PATH" | awk '{print $1}')${NC}"
-echo -n "  Verifying SHA-256... "
-if echo "$MODEL_SHA256  $MODEL_PATH" | sha256sum -c - &>/dev/null; then
-    echo -e "${GREEN}ok${NC}"
-else
-    echo -e "${RED}MISMATCH${NC}"
-    echo -e "${RED}[✗] Model file failed integrity check. Re-download with: docker run --rm -v ... download-model${NC}"
-    exit 1
+
+# Resolve which SHA to check against.
+# If MODEL_SHA256 is set in the environment, use it (supports custom models).
+# If unset and the model filename matches the default, use the built-in hash.
+# If unset and the model is custom, skip the check with a warning.
+if [[ -z "$MODEL_SHA256" ]]; then
+    if [[ "$(basename "$MODEL_PATH")" == "$DEFAULT_MODEL_FILE" ]]; then
+        MODEL_SHA256="$DEFAULT_SHA256"
+    else
+        echo -e "${YELLOW}[!] Skipping SHA-256 check — set MODEL_SHA256 env var to verify a custom model${NC}"
+    fi
+fi
+
+if [[ -n "$MODEL_SHA256" ]]; then
+    echo -n "  Verifying SHA-256... "
+    if echo "$MODEL_SHA256  $MODEL_PATH" | sha256sum -c - &>/dev/null; then
+        echo -e "${GREEN}ok${NC}"
+    else
+        echo -e "${RED}MISMATCH${NC}"
+        echo -e "${RED}[✗] Model file failed integrity check. Re-download with: docker run --rm -v ... download-model${NC}"
+        exit 1
+    fi
 fi
 echo -e "${CYAN}[dashboard]${NC} Starting services..."
 echo ""

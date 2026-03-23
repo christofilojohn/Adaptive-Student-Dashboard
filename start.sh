@@ -26,6 +26,13 @@ banner() {
 
 # ── Config ───────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load .env if present — mirrors docker-compose behaviour so users only need
+# to maintain one config file.
+# shellcheck disable=SC1091
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+  set -a; source "$SCRIPT_DIR/.env"; set +a
+fi
 MODEL_DIR="${DASHBOARD_MODEL_DIR:-$HOME/.cache/dashboard-models}"
 MODEL_FILE="Phi-3.5-mini-instruct-Q4_K_M.gguf"
 MODEL_REPO="bartowski/Phi-3.5-mini-instruct-GGUF"
