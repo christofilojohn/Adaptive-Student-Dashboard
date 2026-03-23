@@ -43,7 +43,7 @@ MODEL_SHA256="e4165e3a71af97f1b4820da61079826d8752a2088e313af0c7d346796c38eff5"
 LLM_PORT=8080
 UI_PORT=5173
 CONTEXT="${LLM_CONTEXT:-4096}"
-THREADS="${LLM_THREADS:-4}"
+THREADS="${LLM_THREADS:-4}"   # GPU default; CPU path overrides to 8 inside detect_gpu()
 
 # ── Cleanup on exit ──────────────────────────────────────────
 declare -a PIDS=()
