@@ -44,7 +44,9 @@ try_prebuilt() {
 
   # GitHub release (Linux CUDA) — pinned to b4887 to match the source-build fallback
   if [[ "$PLATFORM" == "linux-cuda" ]]; then
-    CUDA_VER=$(nvidia-smi | grep "CUDA Version" | awk '{print $9}' | cut -d'.' -f1 || echo "12")
+    # Full version string (e.g. 12.2.0) is required — release tarballs use names like
+    # llama-b4887-bin-ubuntu-x64-cuda-cu12.2.0.tar.gz, not cu12.tar.gz.
+    CUDA_VER=$(nvidia-smi | grep "CUDA Version" | awk '{print $NF}' || echo "12.2.0")
     PINNED_TAG="b4887"
     log "Downloading llama.cpp $PINNED_TAG pre-built binary for CUDA $CUDA_VER..."
     TARBALL="llama-${PINNED_TAG}-bin-ubuntu-x64-cuda-cu${CUDA_VER}.tar.gz"

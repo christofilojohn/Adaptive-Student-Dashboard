@@ -124,8 +124,11 @@ ENV LLM_THREADS=4
 ENV LLM_NGL=999
 
 # Run as non-root. Port 3000 > 1024 so no capability needed.
+# Replace the default 'user www-data;' directive — nginx cannot setuid() when
+# it is not root, so the worker user must match the process owner.
 # Pre-create the nginx pid file so the dashboard user can write to it.
 RUN useradd --system --no-create-home --shell /sbin/nologin dashboard \
+    && sed -i 's/^user www-data;/user dashboard;/' /etc/nginx/nginx.conf \
     && chown -R dashboard:dashboard /var/www/dashboard /var/log \
     && touch /run/nginx.pid && chown dashboard:dashboard /run/nginx.pid
 USER dashboard
