@@ -14,6 +14,7 @@ export default defineConfig({
   server: {
     host: HOST,
     port: 5173,
+    strictPort: true,
     proxy: {
       '/v1': {
         target: `http://127.0.0.1:${LLM_PORT}`,
