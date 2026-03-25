@@ -202,17 +202,19 @@ const HeaderLockCtx = createContext(0);
 
 function useDraggable(ix, iy) {
     const minY = useContext(HeaderLockCtx);
-    const [pos, setPos] = useState({ x: ix, y: iy });
+    const minYRef = useRef(minY);
+    useEffect(() => { minYRef.current = minY; }, [minY]);
+    const [pos, setPos] = useState({ x: ix, y: Math.max(minY, iy) });
     const dr = useRef(false), off = useRef({ x: 0, y: 0 });
     const onMouseDown = useCallback((e) => {
         if (e.target.closest("button, input, textarea, select, a, [data-nodrag]")) return;
         e.preventDefault(); dr.current = true; off.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
         const mv = ev => {
-            if (dr.current) setPos({ x: ev.clientX - off.current.x, y: Math.max(minY, ev.clientY - off.current.y) });
+            if (dr.current) setPos({ x: ev.clientX - off.current.x, y: Math.max(minYRef.current, ev.clientY - off.current.y) });
         };
         const up = () => { dr.current = false; window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
         window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
-    }, [pos.x, pos.y, minY]);
+    }, [pos.x, pos.y]);
     return { pos, onMouseDown };
 }
 
