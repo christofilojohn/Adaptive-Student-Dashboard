@@ -949,17 +949,22 @@ export default function App() {
     const noteColors = ["#fef68a", "#ffd6a5", "#caffbf", "#bde0fe", "#e9d5ff"];
     const selectedPostit = postits.find(p => p.id === selectedPostitId) || null;
     const createPostit = () => {
+    const id = gid();
+
+    setPostits(p => {
         const next = {
-            id: gid(),
+            id,
             content: "New sticky note",
-            color: noteColors[postits.length % noteColors.length],
-            x: 1025 + (postits.length % 4) * 26,
-            y: 245 + (postits.length % 4) * 22
+            color: noteColors[p.length % noteColors.length],
+            x: 1025 + (p.length % 4) * 26,
+            y: 245 + (p.length % 4) * 22
         };
-        setPostits(p => [...p, next]);
-        setShowPostitLibrary(true);
-        setSelectedPostitId(next.id);
-    };
+        return [...p, next];
+    });
+
+    setShowPostitLibrary(true);
+    setSelectedPostitId(id);
+};
     const updatePostit = (id, updates) => setPostits(pp => pp.map(n => n.id === id ? { ...n, ...updates } : n));
     const deletePostit = (id) => {
         setPostits(pp => pp.filter(n => n.id !== id));
