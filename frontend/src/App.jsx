@@ -986,7 +986,7 @@ export default function App() {
                     return result;
                 });
             }
-            else if (t === "add_timer") { const mins = Number(a.minutes); if (mins > 0) setTimers(p => [...p, { id: gid(), minutes: mins, label: a.label || "Timer" }]); }
+            else if (t === "add_timer") { const mins = Number(a.minutes); if (mins > 0) setTimers(p => [...p, { id: gid(), minutes: mins, label: a.label || "Timer" }]); else console.warn("[exec] add_timer skipped: invalid minutes:", a.minutes); }
             else if (t === "change_theme" && themes[a.theme]) { setBg(themes[a.theme].bg); setAccent(themes[a.theme].accent); }
             else if (t === "set_greeting" && a.text) setGreeting(a.text);
             else if (t === "add_widget" && a.widgetType) setWidgets(p => [...p, { id: gid(), type: a.widgetType }]);
