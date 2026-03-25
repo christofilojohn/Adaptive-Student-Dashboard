@@ -279,16 +279,18 @@ start_frontend() {
   FRONTEND_DIR="$SCRIPT_DIR/frontend"
   log "Starting frontend..."
 
+  # Install deps synchronously so they don't eat into the UI startup timeout
   (
     cd "$FRONTEND_DIR"
-
-    # Re-install if node_modules is missing or package.json is newer (catches added packages)
     if [[ ! -d "node_modules" ]] || [[ "package.json" -nt "node_modules/.package-lock.json" ]]; then
       log "Installing npm dependencies..."
       npm install --silent
       ok "Dependencies installed"
     fi
+  )
 
+  (
+    cd "$FRONTEND_DIR"
     npm run dev > "$SCRIPT_DIR/.ui.log" 2>&1
   ) &
   UI_PID=$!
@@ -296,7 +298,7 @@ start_frontend() {
 
   # Wait for UI
   echo -n "  Waiting for UI"
-  for i in $(seq 1 30); do
+  for i in $(seq 1 60); do
     sleep 0.5
     if curl -sf "http://localhost:$UI_PORT" &>/dev/null; then
       echo ""
