@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, createContext, useContext } from "react";
 
 // ═══════════════════════════════════════════════════
 // CONFIG
@@ -198,7 +198,7 @@ async function callAmbientLLM(contextMsg) {
 // HOOKS & HELPERS
 // ═══════════════════════════════════════════════════
 // Shared context so every draggable knows how tall the locked header area is
-const HeaderLockCtx = React.createContext(0);
+const HeaderLockCtx = createContext(0);
 
 function useDraggable(ix, iy) {
     const minY = useContext(HeaderLockCtx);
