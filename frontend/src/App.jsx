@@ -747,51 +747,134 @@ const WMO_CODES = {
 };
 
 function WeatherWidget({ light, accent, ambient, onClose }) {
-    const [city, setCity] = useState("Dublin");
+    const [query, setQuery] = useState("Dublin");
+    const [editing, setEditing] = useState(false);
+    const [suggestions, setSuggestions] = useState([]);
+    const [selected, setSelected] = useState(null); // { latitude, longitude, name, country_code }
     const [weather, setWeather] = useState(null);
     const [fetching, setFetching] = useState(false);
     const [err, setErr] = useState(null);
+    const inputRef = useRef(null);
     const tx = light ? "#2d3436" : "#fff";
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
+    const panelBg = light ? "rgba(255,255,255,0.92)" : "rgba(15,15,28,0.92)";
+    const borderCol = light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)";
 
+    // Fetch suggestions as user types
     useEffect(() => {
+        if (!editing || !query.trim()) { setSuggestions([]); return; }
         const ctrl = new AbortController();
         const t = setTimeout(async () => {
-            if (!city.trim()) return;
-            setFetching(true); setErr(null);
             try {
                 const geo = await fetch(
-                    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city.trim())}&count=1&language=en&format=json`,
+                    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query.trim())}&count=5&language=en&format=json`,
                     { signal: ctrl.signal }
                 ).then(r => r.json());
-                if (!geo.results?.length) { setErr("City not found"); setFetching(false); return; }
-                const { latitude, longitude, name, country_code } = geo.results[0];
-                const wx = await fetch(
-                    `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,apparent_temperature,weathercode,wind_speed_10m,relative_humidity_2m&wind_speed_unit=kmh`,
-                    { signal: ctrl.signal }
-                ).then(r => r.json());
-                setWeather({ ...wx.current, name, country_code });
-            } catch (e) {
-                if (e.name !== "AbortError") setErr("Couldn't reach weather service");
-            }
-            setFetching(false);
-        }, 600);
+                setSuggestions(geo.results ?? []);
+            } catch { /* ignore abort */ }
+        }, 350);
         return () => { clearTimeout(t); ctrl.abort(); };
-    }, [city]);
+    }, [query, editing]);
+
+    // Fetch weather for the selected location
+    useEffect(() => {
+        if (!selected) return;
+        const ctrl = new AbortController();
+        setFetching(true); setErr(null);
+        fetch(
+            `https://api.open-meteo.com/v1/forecast?latitude=${selected.latitude}&longitude=${selected.longitude}&current=temperature_2m,apparent_temperature,weathercode,wind_speed_10m,relative_humidity_2m&wind_speed_unit=kmh`,
+            { signal: ctrl.signal }
+        ).then(r => r.json()).then(wx => {
+            setWeather({ ...wx.current, name: selected.name, country_code: selected.country_code });
+            setFetching(false);
+        }).catch(e => {
+            if (e.name !== "AbortError") { setErr("Couldn't reach weather service"); setFetching(false); }
+        });
+        return () => ctrl.abort();
+    }, [selected]);
+
+    // Bootstrap on first render
+    useEffect(() => {
+        setSelected({ latitude: 53.3331, longitude: -6.2489, name: "Dublin", country_code: "IE" });
+    }, []);
+
+    function pickSuggestion(s) {
+        setSelected(s);
+        setQuery(s.name);
+        setSuggestions([]);
+        setEditing(false);
+    }
 
     const [icon, desc] = weather ? (WMO_CODES[weather.weathercode] ?? ["🌡️", "Unknown"]) : ["🌡️", "—"];
 
     return (
         <Panel x={645} y={590} width={210} title="Weather" icon="🌤️" onClose={onClose} ambient={ambient} light={light} accent={accent}>
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <EditableText
-                        value={city}
-                        onChange={v => setCity(v)}
-                        maxLen={40}
-                        style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 1.5, textTransform: "uppercase", color: accent }}
-                    />
-                    {weather && <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: txm, letterSpacing: 1 }}>{weather.country_code?.toUpperCase()}</span>}
+
+                {/* City input + suggestions */}
+                <div style={{ position: "relative" }} data-nodrag>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                        {editing ? (
+                            <input
+                                ref={inputRef}
+                                value={query}
+                                onChange={e => setQuery(e.target.value)}
+                                onBlur={() => setTimeout(() => { setSuggestions([]); setEditing(false); }, 150)}
+                                onKeyDown={e => {
+                                    if (e.key === "Escape") { setQuery(weather?.name ?? query); setSuggestions([]); setEditing(false); }
+                                    if (e.key === "Enter" && suggestions.length) pickSuggestion(suggestions[0]);
+                                }}
+                                autoFocus
+                                style={{
+                                    fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 1.5,
+                                    textTransform: "uppercase", color: accent, background: "transparent",
+                                    border: "none", borderBottom: `1px solid ${accent}55`, outline: "none",
+                                    width: "100%", paddingBottom: 2,
+                                }}
+                            />
+                        ) : (
+                            <button
+                                onClick={() => { setEditing(true); setTimeout(() => inputRef.current?.select(), 10); }}
+                                style={{
+                                    fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 1.5,
+                                    textTransform: "uppercase", color: accent, background: "none",
+                                    border: "none", cursor: "text", padding: 0, textAlign: "left",
+                                }}
+                            >
+                                {weather?.name ?? query}
+                            </button>
+                        )}
+                        {weather && <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: txm, letterSpacing: 1, flexShrink: 0 }}>{weather.country_code?.toUpperCase()}</span>}
+                    </div>
+
+                    {/* Suggestions dropdown */}
+                    {suggestions.length > 0 && (
+                        <div style={{
+                            position: "absolute", top: "100%", left: 0, right: 0, zIndex: 999, marginTop: 4,
+                            background: panelBg, border: `1px solid ${borderCol}`,
+                            borderRadius: 8, overflow: "hidden",
+                            boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+                        }}>
+                            {suggestions.map(s => (
+                                <button
+                                    key={s.id}
+                                    onMouseDown={() => pickSuggestion(s)}
+                                    style={{
+                                        display: "block", width: "100%", textAlign: "left",
+                                        padding: "7px 10px", background: "none", border: "none",
+                                        cursor: "pointer", borderBottom: `1px solid ${borderCol}`,
+                                    }}
+                                    onMouseEnter={e => e.currentTarget.style.background = `${accent}18`}
+                                    onMouseLeave={e => e.currentTarget.style.background = "none"}
+                                >
+                                    <div style={{ fontSize: 11, color: tx, fontWeight: 500 }}>{s.name}</div>
+                                    <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'", marginTop: 1 }}>
+                                        {[s.admin1, s.country].filter(Boolean).join(", ")}
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 {fetching && <div style={{ fontSize: 11, color: txm, fontFamily: "'JetBrains Mono'" }}>Fetching…</div>}
@@ -813,7 +896,7 @@ function WeatherWidget({ light, accent, ambient, onClose }) {
                 </>}
 
                 <div style={{ fontSize: 7.5, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 0.5, opacity: 0.7 }}>
-                    Tap city name to change · Open-Meteo
+                    Tap city to search · Open-Meteo
                 </div>
             </div>
         </Panel>
