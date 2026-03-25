@@ -832,16 +832,18 @@ export default function App() {
             else if (t === "add_event") setEvents(p => [...p, { id: gid(), title: a.title || "Event", date: a.date || new Date().toISOString().split("T")[0], time: a.time || "09:00", duration: Number(a.duration) || 60, color: a.color || "#6c5ce7" }]);
             else if (t === "delete_event" && a.title) setEvents(p => p.filter(e => !String(e.title).toLowerCase().includes(String(a.title).toLowerCase())));
             else if (t === "add_expense") setExpenses(p => [...p, { id: gid(), description: a.description || "Expense", amount: Number(a.amount) || 0, category: a.category || "other" }]);
-            else if (t === "add_note") setPostits(p => [
-                ...p,
-                {
-                    id: gid(),
-                    content: a.content || "Quick note",
-                    color: a.color || "#fef68a",
-                    x: 1085 + (p.length % 4) * 26,
-                    y: 245 + (p.length % 4) * 22
-                }
-            ]);
+            else if (t === "add_note") setPostits(p => {
+                const pos = getNextPostitPosition(p.length);
+                return [
+                    ...p,
+                    {
+                        id: gid(),
+                        content: a.content || "Quick note",
+                        color: a.color || "#fef68a",
+                        ...pos
+                    }
+                ];
+            });
             else if (t === "set_budget") setBudgetVal(Number(a.amount) || 0);
             else if (t === "adjust_ambient") {
                 setAmbient(prev => ({
@@ -947,24 +949,28 @@ export default function App() {
     const adaptiveStatus = adaptiveStatusMap[ambient.mood] || "Planning mode active";
 
     const noteColors = ["#fef68a", "#ffd6a5", "#caffbf", "#bde0fe", "#e9d5ff"];
+    const getNextPostitPosition = (count) => ({
+        x: 1025 + (count % 4) * 26,
+        y: 245 + (count % 4) * 22
+    });
     const selectedPostit = postits.find(p => p.id === selectedPostitId) || null;
     const createPostit = () => {
-    const id = gid();
+        const id = gid();
 
-    setPostits(p => {
-        const next = {
-            id,
-            content: "New sticky note",
-            color: noteColors[p.length % noteColors.length],
-            x: 1025 + (p.length % 4) * 26,
-            y: 245 + (p.length % 4) * 22
-        };
-        return [...p, next];
-    });
+        setPostits(p => {
+            const pos = getNextPostitPosition(p.length);
+            const next = {
+                id,
+                content: "New sticky note",
+                color: noteColors[p.length % noteColors.length],
+                ...pos
+            };
+            return [...p, next];
+        });
 
-    setShowPostitLibrary(true);
-    setSelectedPostitId(id);
-};
+        setShowPostitLibrary(true);
+        setSelectedPostitId(id);
+    };
     const updatePostit = (id, updates) => setPostits(pp => pp.map(n => n.id === id ? { ...n, ...updates } : n));
     const deletePostit = (id) => {
         setPostits(pp => pp.filter(n => n.id !== id));
