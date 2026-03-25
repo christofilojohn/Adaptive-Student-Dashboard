@@ -234,8 +234,8 @@ function QuickAdd({ placeholder, onSubmit, light, accent }) {
             <input value={val} onChange={e => setVal(e.target.value)} onKeyDown={e => e.key === "Enter" && submit()}
                 placeholder={placeholder} data-nodrag
                 style={{
-                    flex: 1, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.05)", border: `1px solid ${light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.06)"}`,
-                    borderRadius: 6, padding: "4px 8px", fontSize: 10.5, color: light ? "#2d3436" : "rgba(255,255,255,0.8)", outline: "none", fontFamily: "'DM Sans'"
+                    flex: 1, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.07)", border: `1px solid ${light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.10)"}`,
+                    borderRadius: 6, padding: "4px 8px", fontSize: 10.5, color: light ? "#2d3436" : "rgba(255,255,255,0.9)", outline: "none", fontFamily: "'DM Sans'"
                 }} />
             <button onClick={submit} style={{ background: `${accent}22`, border: `1px solid ${accent}44`, borderRadius: 6, padding: "3px 8px", fontSize: 12, cursor: "pointer", color: accent, lineHeight: 1 }}>+</button>
         </div>
@@ -414,7 +414,7 @@ function LennyBuddy({ mood, glowColor, light, loading }) {
 // ═══════════════════════════════════════════════════
 // COMPONENTS
 // ═══════════════════════════════════════════════════
-function Panel({ children, x, y, width, title, icon, onClose, ambient, light }) {
+function Panel({ children, x, y, width, title, icon, onClose, ambient, light, accent = "#8b5cf6" }) {
     const { pos, onMouseDown } = useDraggable(x, y);
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     const bw = ambient.borderWarmth || 0;
@@ -422,15 +422,18 @@ function Panel({ children, x, y, width, title, icon, onClose, ambient, light }) 
     const panelBg = light ? `rgba(255,255,255,${0.65 + (ambient.panelOpacity || 0.03) * 3})` : `rgba(255,255,255,${ambient.panelOpacity || 0.03})`;
     const safeGlow = (ambient.glowColor && ambient.glowColor !== "transparent") ? ambient.glowColor : "#ffffff";
     const reflectCol = ambient.glowIntensity > 0 ? `${safeGlow}08` : "transparent";
+    const accentGlow = `${accent}14`;
+    const accentBorder = `${accent}30`;
+    const headerTint = light ? `${accent}10` : `${accent}12`;
 
     return (
-        <div onMouseDown={onMouseDown} style={{
+        <div className="panel-shell" onMouseDown={onMouseDown} style={{
             position: "absolute", left: pos.x, top: pos.y, width, background: `linear-gradient(135deg, ${panelBg}, ${reflectCol})`,
-            backdropFilter: `blur(${ambient.panelBlur || 20}px)`, border: `1px solid ${borderCol}`, borderRadius: 14, cursor: "grab", zIndex: 15,
-            boxShadow: `0 8px 32px rgba(0,0,0,0.18), inset 0 1px 0 ${light ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.04)"}`,
-            userSelect: "none", overflow: "hidden", transition: "border-color 1.5s, background 1.5s, box-shadow 1.5s", animation: "panelIn 0.3s ease-out",
+            backdropFilter: `blur(${ambient.panelBlur || 20}px)`, border: `1px solid ${borderCol}`, borderTop: `1px solid ${accentBorder}`, borderRadius: 14, cursor: "grab", zIndex: 15,
+            boxShadow: `0 8px 32px rgba(0,0,0,0.18), 0 0 0 1px ${accentGlow}, inset 0 1px 0 ${light ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.04)"}`,
+            userSelect: "none", overflow: "hidden", transition: "border-color 1.5s, background 1.5s, box-shadow 1.5s, transform 0.2s ease", animation: "panelIn 0.3s ease-out",
         }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 13px 7px", borderBottom: `1px solid ${borderCol}` }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 13px 7px", borderBottom: `1px solid ${borderCol}`, background: `linear-gradient(90deg, ${headerTint}, transparent)` }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ fontSize: 12 }}>{icon}</span>
                     <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, textTransform: "uppercase", letterSpacing: 2, color: txm }}>{title}</span>
@@ -447,7 +450,7 @@ function PostIt({ id, content, color, initialX, initialY, onRemove, onEdit }) {
     const rot = useRef((-3 + Math.random() * 6).toFixed(1));
     const em = guessEmoji(content);
     return (
-        <div onMouseDown={onMouseDown} style={{
+        <div className="panel-shell" onMouseDown={onMouseDown} style={{
             position: "absolute", left: pos.x, top: pos.y, width: 175, minHeight: 95,
             background: color || "#fef68a", borderRadius: 3, padding: "24px 12px 12px", cursor: "grab",
             transform: `rotate(${rot.current}deg)`, zIndex: 12, boxShadow: "2px 4px 18px rgba(0,0,0,0.22), inset 0 -2px 4px rgba(0,0,0,0.05)",
@@ -510,7 +513,7 @@ function TasksPanel({ tasks, onToggle, onEditTask, onRequestSplit, onAddTask, ac
     const prioC = { high: "#e74c3c", medium: "#f39c12", low: "#00b894" };
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     return (
-        <Panel x={24} y={90} width={330} title={`Tasks · ${tasks.filter(t => !t.done && !t.isParent).length} active`} icon="✓" light={light} onClose={onClose} ambient={ambient}>
+        <Panel x={24} y={320} width={330} title={`Tasks · ${tasks.filter(t => !t.done && !t.isParent).length} active`} icon="✓" light={light} onClose={onClose} ambient={ambient} accent={accent}>
             {tasks.length === 0 && <div style={{ fontSize: 12, color: txm, fontStyle: "italic" }}>No tasks yet</div>}
             {tasks.map(tk => {
                 const em = guessEmoji(tk.text);
@@ -527,7 +530,7 @@ function TasksPanel({ tasks, onToggle, onEditTask, onRequestSplit, onAddTask, ac
                                     display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, marginLeft: tk.parentId ? 14 : 0, transition: "all 0.2s",
                                 }}>{tk.done && "✓"}</div>
                             )}
-                            <div style={{ flex: 1, opacity: tk.done ? 0.3 : 1, display: "flex", alignItems: "center", gap: 4, transition: "opacity 0.3s" }}>
+                            <div style={{ flex: 1, opacity: tk.done ? 0.5 : 1, display: "flex", alignItems: "center", gap: 4, transition: "opacity 0.3s" }}>
                                 {em && <span style={{ fontSize: 11, flexShrink: 0 }}>{em}</span>}
                                 <EditableText value={tk.text} onChange={v => onEditTask(tk.id, v)} maxLen={TASK_CHAR_LIMIT}
                                     style={{ fontSize: tk.isParent ? 12 : (tk.parentId ? 11 : 12), fontWeight: tk.isParent ? 600 : 400, color: light ? "#2d3436" : "rgba(255,255,255,0.85)", textDecoration: tk.done ? "line-through" : "none", flex: 1 }} />
@@ -571,7 +574,7 @@ function CalendarPanel({ events, onDeleteEvent, onAddEvent, accent, light, onClo
     };
 
     return (
-        <Panel x={24} y={385} width={330} title="Calendar" icon="📅" light={light} onClose={onClose} ambient={ambient}>
+        <Panel x={24} y={485} width={330} title="Calendar" icon="📅" light={light} onClose={onClose} ambient={ambient} accent={accent}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <div style={{ display: "flex", gap: 3 }}>
                     {["week", "list"].map(v => <button key={v} onClick={() => setView(v)} style={{ padding: "2px 7px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", textTransform: "uppercase", letterSpacing: 1, background: view === v ? `${accent}22` : "transparent", border: `1px solid ${view === v ? `${accent}44` : "transparent"}`, color: view === v ? accent : txm }}>{v}</button>)}
@@ -635,7 +638,7 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     const submit = () => { if (!desc.trim() || !amt) return; onAddExpense(desc.trim(), parseFloat(amt), cat); setDesc(""); setAmt(""); setShowForm(false); };
 
     return (
-        <Panel x={370} y={90} width={250} title="Budget" icon="💰" light={light} onClose={onClose} ambient={ambient}>
+        <Panel x={370} y={320} width={250} title="Budget" icon="💰" light={light} onClose={onClose} ambient={ambient} accent={accent}>
             <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 8 }}>
                 <div style={{ position: "relative", width: 48, height: 48, flexShrink: 0 }}>
                     <svg width="48" height="48" viewBox="0 0 48 48">
@@ -647,6 +650,9 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
                 <div>
                     <div style={{ fontSize: 16, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: tx }}>€{total.toFixed(2)}</div>
                     <div style={{ fontSize: 9, color: remaining >= 0 ? "#00b894" : "#e74c3c", fontFamily: "'JetBrains Mono'" }}>{budget > 0 ? `€${remaining.toFixed(2)} ${remaining >= 0 ? "left" : "over"}` : "No budget"}</div>
+                    <div style={{ marginTop: 3, fontSize: 8.5, color: pct >= 0.9 ? "#e74c3c" : pct >= 0.7 ? "#f59e0b" : "#34d399", fontFamily: "'JetBrains Mono'" }}>
+                        {pct >= 0.9 ? "Over limit" : pct >= 0.7 ? "Watch spend" : "On track"}
+                    </div>
                 </div>
             </div>
             {Object.keys(catT).length > 0 && <div style={{ marginBottom: 6 }}>
@@ -689,6 +695,41 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     );
 }
 
+function RewardsPanel({ completedTasks, weeklyGoalTarget, weeklyStreak, accent, light, onClose, ambient }) {
+    const progress = Math.min(completedTasks / weeklyGoalTarget, 1);
+    const remaining = Math.max(weeklyGoalTarget - completedTasks, 0);
+    const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
+    const tx = light ? "#2d3436" : "#fff";
+    const rewardStatus = progress >= 1 ? "Weekly goal achieved" : remaining === 1 ? "1 task left" : `${remaining} tasks left`;
+    const rewardSubtext = progress >= 1 ? "Reward unlocked ✦" : progress >= 0.6 ? "On track this week" : "Keep building momentum";
+
+    return (
+        <Panel x={645} y={320} width={250} title="Rewards" icon="⭐" light={light} onClose={onClose} ambient={ambient} accent="#f59e0b">
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                <div>
+                    <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 1.2, textTransform: "uppercase" }}>Weekly goal</div>
+                    <div style={{ marginTop: 4, fontSize: 26, fontWeight: 700, color: tx, fontFamily: "'JetBrains Mono'" }}>{completedTasks}/{weeklyGoalTarget}</div>
+                    <div style={{ marginTop: 3, fontSize: 9, color: progress >= 1 ? "#f59e0b" : progress >= 0.6 ? "#34d399" : txm, fontFamily: "'JetBrains Mono'" }}>{rewardSubtext}</div>
+                </div>
+                <div style={{ minWidth: 62, textAlign: "right" }}>
+                    <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 1.2, textTransform: "uppercase" }}>Streak</div>
+                    <div style={{ marginTop: 4, fontSize: 20, fontWeight: 700, color: "#f59e0b", fontFamily: "'JetBrains Mono'" }}>{weeklyStreak}w</div>
+                </div>
+            </div>
+            <div style={{ marginTop: 12, height: 8, borderRadius: 999, background: light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                <div style={{ width: `${progress * 100}%`, height: "100%", borderRadius: 999, background: "linear-gradient(90deg,#f59e0b,#fbbf24)", transition: "width 0.3s ease" }} />
+            </div>
+            <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <div style={{ fontSize: 10, color: tx }}>{rewardStatus}</div>
+                <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>{Math.round(progress * 100)}%</div>
+            </div>
+            <div style={{ marginTop: 12, padding: "8px 10px", borderRadius: 8, background: light ? "rgba(245,158,11,0.08)" : "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.18)", fontSize: 10, color: tx, lineHeight: 1.45 }}>
+                {progress >= 1 ? "Nice work — your weekly target is complete." : `Complete ${remaining} more task${remaining === 1 ? "" : "s"} to unlock this week's reward.`}
+            </div>
+        </Panel>
+    );
+}
+
 function TypingDots() { return <div style={{ display: "flex", gap: 3, padding: "8px 12px", alignSelf: "flex-start" }}>{[0, 1, 2].map(i => <div key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.3)", animation: `bk 1.2s ${i * .15}s infinite ease-in-out` }} />)}</div>; }
 
 // ═══════════════════════════════════════════════════
@@ -696,22 +737,22 @@ function TypingDots() { return <div style={{ display: "flex", gap: 3, padding: "
 // ═══════════════════════════════════════════════════
 export default function App() {
     const [bg, setBg] = useState("linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)");
-    const [greeting, setGreeting] = useState("Welcome to your dashboard.");
+    const [greeting, setGreeting] = useState("Plan your week, not just your tasks.");
     const [accent, setAccent] = useState("#00cec9");
     const [ambient, setAmbient] = useState({ ...DEFAULT_AMBIENT });
-    const [showTasks, setShowTasks] = useState(true), [showCal, setShowCal] = useState(true), [showBudget, setShowBudget] = useState(true);
+    const [showTasks, setShowTasks] = useState(true), [showCal, setShowCal] = useState(true), [showBudget, setShowBudget] = useState(true), [showRewards, setShowRewards] = useState(true);
     const [postits, setPostits] = useState([]);
     const [tasks, setTasks] = useState([
-        { id: "t1", text: "Review project proposal 📝", priority: "high", done: false },
-        { id: "t2", text: "Prepare meeting notes 📞", priority: "medium", done: false },
-        { id: "t3", text: "Update documentation 📚", priority: "low", done: false },
+        { id: "t1", text: "Finish adaptive apps UI polish 🎨", priority: "high", done: false },
+        { id: "t2", text: "Review CS deadline list 📚", priority: "medium", done: false },
+        { id: "t3", text: "Plan study blocks for the week 🗓️", priority: "low", done: false },
     ]);
     const [timers, setTimers] = useState([]), [widgets, setWidgets] = useState([]);
     const [events, setEvents] = useState([
-        { id: "e1", title: "Team standup 👥", date: new Date().toISOString().split("T")[0], time: "09:00", duration: 30, color: "#6c5ce7" },
-        { id: "e2", title: "Design review 🎨", date: (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split("T")[0]; })(), time: "14:00", duration: 60, color: "#00cec9" },
+        { id: "e1", title: "Lecture block 📚", date: new Date().toISOString().split("T")[0], time: "10:00", duration: 60, color: "#6c5ce7" },
+        { id: "e2", title: "Team checkpoint 👥", date: (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split("T")[0]; })(), time: "15:00", duration: 45, color: "#00cec9" },
     ]);
-    const [expenses, setExpenses] = useState([{ id: "x1", description: "Coffee ☕", amount: 4.50, category: "food" }, { id: "x2", description: "Bus pass 🚆", amount: 30, category: "transport" }, { id: "x3", description: "Groceries 🛒", amount: 42.80, category: "food" }]);
+    const [expenses, setExpenses] = useState([{ id: "x1", description: "Coffee ☕", amount: 4.50, category: "food" }, { id: "x2", description: "Bus fare 🚍", amount: 20, category: "transport" }, { id: "x3", description: "Library lunch 🥪", amount: 8.90, category: "food" }]);
     const [budget, setBudgetVal] = useState(500);
     const [input, setInput] = useState(""), [loading, setLoading] = useState(false);
     const [lennyMood, setLennyMood] = useState("neutral");
@@ -844,10 +885,47 @@ export default function App() {
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     const txs = light ? "rgba(45,52,54,0.12)" : "rgba(255,255,255,0.1)";
     const pBd = light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)";
-    const togs = [{ k: "t", l: "Tasks", s: showTasks, f: setShowTasks, i: "✓" }, { k: "c", l: "Calendar", s: showCal, f: setShowCal, i: "📅" }, { k: "b", l: "Budget", s: showBudget, f: setShowBudget, i: "💰" }];
+    const togs = [{ k: "t", l: "Tasks", s: showTasks, f: setShowTasks, i: "✓" }, { k: "c", l: "Calendar", s: showCal, f: setShowCal, i: "📅" }, { k: "b", l: "Budget", s: showBudget, f: setShowBudget, i: "💰" }, { k: "r", l: "Rewards", s: showRewards, f: setShowRewards, i: "⭐" }];
+
+    const activeTasks = tasks.filter(t => !t.done && !t.isParent).length;
+    const completedTasks = tasks.filter(t => t.done).length;
+    const upcomingEvents = events.length;
+    const weeklySpend = expenses.reduce((s, e) => s + e.amount, 0);
+    const budgetProgress = budget > 0 ? Math.min(100, Math.round((weeklySpend / budget) * 100)) : 0;
+    const studyStreak = Math.min(7, Math.max(1, activeTasks + completedTasks));
+    const weeklyGoalTarget = 5;
+    const weeklyGoalProgress = Math.min(completedTasks, weeklyGoalTarget);
+    const weeklyGoalMet = weeklyGoalProgress >= weeklyGoalTarget;
+    const weeklyGoalHelper = weeklyGoalMet ? "Reward unlocked" : weeklyGoalTarget - weeklyGoalProgress === 1 ? "1 task left" : `${weeklyGoalTarget - weeklyGoalProgress} tasks left`;
+    const statCards = [
+        { label: "Active tasks", value: activeTasks, helper: activeTasks <= 2 ? "On track" : "Busy week" },
+        { label: "Upcoming events", value: upcomingEvents, helper: upcomingEvents > 0 ? "Plan ahead" : "Clear calendar" },
+        { label: "Budget used", value: `${budgetProgress}%`, helper: budgetProgress >= 70 ? "Watch spend" : "On track" },
+        { label: "Study streak", value: `${studyStreak}d`, helper: studyStreak >= 5 ? "Building rhythm" : "Momentum" },
+        { label: "Weekly goal", value: `${weeklyGoalProgress}/${weeklyGoalTarget}`, helper: weeklyGoalHelper },
+    ];
+    const quickThemes = [
+        { key: "focus", label: "Deep focus" },
+        { key: "cozy", label: "Cozy study" },
+        { key: "ocean", label: "Fresh start" },
+        { key: "minimal", label: "Minimal" },
+    ];
 
     const safeAmbientGlowColor = (ambient.glowColor && ambient.glowColor !== "transparent") ? ambient.glowColor : "#ffffff";
     const ambientBg = ambient.glowIntensity > 0 ? `radial-gradient(ellipse at 30% 40%, ${safeAmbientGlowColor}${Math.round(ambient.glowIntensity * 255).toString(16).padStart(2, "0")} 0%, transparent 70%)` : "none";
+
+    const adaptiveStatusMap = {
+        focus: "Focus mode active",
+        cozy: "Cozy study mode",
+        ocean: "Fresh start mode",
+        sunset: "High energy mode",
+        forest: "Balanced week mode",
+        midnight: "Deep work mode",
+        minimal: "Low distraction mode",
+        neutral: "Planning mode active",
+    };
+
+    const adaptiveStatus = adaptiveStatusMap[ambient.mood] || "Planning mode active";
 
     return <>
         <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,700;1,400&family=JetBrains+Mono:wght@200;400;600;700&display=swap" rel="stylesheet" />
@@ -863,6 +941,7 @@ export default function App() {
             @keyframes lennyThink{0%,100%{transform:translateY(0) rotate(0deg)}25%{transform:translateY(-2px) rotate(-3deg)}75%{transform:translateY(-1px) rotate(3deg)}}
             .anim-item { animation: itemIn 0.25s ease-out; }
             .anim-panel { animation: panelIn 0.2s ease-out; }
+            .panel-shell:hover { transform: translateY(-2px); box-shadow: 0 14px 36px rgba(0,0,0,0.22), 0 0 24px rgba(255,255,255,0.04) !important; }
         `}</style>
 
         <div style={{ width: "100vw", height: "100vh", overflow: "hidden", display: "flex", background: bg, fontFamily: "'DM Sans',sans-serif", color: tx, transition: "background 1.2s ease, color 0.8s" }}>
@@ -876,40 +955,102 @@ export default function App() {
                 <LennyBuddy mood={lennyMood} glowColor={ambient.glowColor !== "transparent" ? ambient.glowColor : accent} light={light} loading={loading} />
 
                 {/* Header */}
-                <div style={{ position: "relative", zIndex: 50, padding: "16px 24px 10px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div>
-                        <h1 style={{ fontFamily: "'DM Sans'", fontWeight: 300, fontSize: 24, margin: 0, letterSpacing: -0.5, color: light ? "rgba(45,52,54,0.88)" : "rgba(255,255,255,0.88)" }}>{greeting}</h1>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
-                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, color: txm, letterSpacing: 1.5, textTransform: "uppercase" }}>Adaptive Dashboard</span>
-                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, letterSpacing: 1, padding: "1px 6px", borderRadius: 3, background: LLM_CONFIG.mode === "local" ? "rgba(0,184,148,0.15)" : "rgba(108,92,231,0.15)", color: LLM_CONFIG.mode === "local" ? "#00b894" : "#6c5ce7", border: `1px solid ${LLM_CONFIG.mode === "local" ? "rgba(0,184,148,0.25)" : "rgba(108,92,231,0.25)"}` }}>{LLM_CONFIG.mode === "local" ? "LOCAL" : "API"}</span>
+                <div style={{ position: "relative", zIndex: 50, padding: "14px 24px 8px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}>
+                    <div style={{ maxWidth: 560 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, color: txm, letterSpacing: 1.7, textTransform: "uppercase" }}>Adaptive Dashboard</span>
+                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, letterSpacing: 1, padding: "2px 7px", borderRadius: 999, background: "rgba(0,184,148,0.15)", color: "#00b894", border: "1px solid rgba(0,184,148,0.25)" }}>LOCAL</span>
+                        </div>
+                        <h1 style={{ fontFamily: "'DM Sans'", fontWeight: 300, fontSize: 24, margin: 0, letterSpacing: -0.5, color: light ? "rgba(45,52,54,0.92)" : "rgba(255,255,255,0.92)" }}>{greeting}</h1>
+                        <div style={{ fontSize: 11.5, lineHeight: 1.45, marginTop: 5, color: light ? "rgba(45,52,54,0.62)" : "rgba(255,255,255,0.58)", maxWidth: 500 }}>
+                            A calmer dashboard for modules, money, and weekly goals — with styling that reacts to how your week feels.
+                        </div>
+                        <div style={{ marginTop: 10 }}>
+                            <span style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 6,
+                                padding: "5px 10px",
+                                borderRadius: 999,
+                                background: light ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.05)",
+                                border: `1px solid ${accent}33`,
+                                color: accent,
+                                fontSize: 9.5,
+                                fontFamily: "'JetBrains Mono'",
+                                letterSpacing: 1,
+                                textTransform: "uppercase"
+                            }}>
+                                ✦ {adaptiveStatus}
+                            </span>
+                        </div>
+                        <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+                            {statCards.map((stat) => (
+                                <div key={stat.label} style={{ minWidth: 108, padding: "8px 10px", borderRadius: 12, background: light ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.045)", border: `1px solid ${light ? "rgba(0,0,0,0.07)" : "rgba(255,255,255,0.07)"}`, boxShadow: light ? "0 6px 18px rgba(0,0,0,0.04)" : "0 10px 30px rgba(0,0,0,0.12)" }}>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, letterSpacing: 1.2, textTransform: "uppercase", color: txm }}>{stat.label}</div>
+                                    <div style={{ marginTop: 4, fontSize: 16, fontWeight: 700, color: tx }}>{stat.value}</div>
+                                    <div style={{ marginTop: 2, fontSize: 8.5, color: stat.label === "Budget used" ? (budgetProgress >= 70 ? "#f59e0b" : "#34d399") : accent, fontFamily: "'JetBrains Mono'", letterSpacing: 0.4 }}>
+                                        {stat.helper}
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     </div>
-                    <div style={{ display: "flex", gap: 4 }}>
-                        {togs.map(t => <button key={t.k} onClick={() => t.f(v => !v)} style={{ padding: "4px 9px", borderRadius: 7, fontSize: 9.5, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: t.s ? `${accent}20` : (light ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)"), border: `1px solid ${t.s ? `${accent}40` : pBd}`, color: t.s ? accent : txm, display: "flex", alignItems: "center", gap: 3, transition: "all 0.2s" }}><span style={{ fontSize: 10 }}>{t.i}</span> {t.l}</button>)}
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                            {togs.map(t => <button key={t.k} onClick={() => t.f(v => !v)} style={{ padding: "5px 10px", borderRadius: 999, fontSize: 9.5, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: t.s ? `${accent}20` : (light ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)"), border: `1px solid ${t.s ? `${accent}40` : pBd}`, color: t.s ? accent : txm, display: "flex", alignItems: "center", gap: 4, transition: "all 0.2s" }}><span style={{ fontSize: 10 }}>{t.i}</span> {t.l}</button>)}
+                        </div>
+                        <div style={{ display: "flex", gap: 5, flexWrap: "wrap", justifyContent: "flex-end", maxWidth: 260 }}>
+                            {quickThemes.map((themeOption) => {
+                                //const isActiveTheme = themeOption.key === ambient.mood;
+                                const isActiveTheme = themeOption.key === ambient.mood;
+                                return (
+                                    <button
+                                        key={themeOption.key}
+                                        onClick={() => exec([{ type: "change_theme", theme: themeOption.key }])}
+                                        style={{
+                                            padding: isActiveTheme ? "5px 11px" : "5px 10px",
+                                            borderRadius: 999,
+                                            fontSize: 9.5,
+                                            cursor: "pointer",
+                                            fontFamily: "'JetBrains Mono'",
+                                            background: isActiveTheme ? `linear-gradient(135deg, ${accent}30, ${accent}16)` : (light ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.035)"),
+                                            border: `1px solid ${isActiveTheme ? `${accent}88` : (light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.07)")}`,
+                                            color: isActiveTheme ? (light ? accent : "#ffffff") : txm,
+                                            boxShadow: isActiveTheme ? `0 0 0 1px ${accent}22, 0 0 18px ${accent}22, 0 8px 18px rgba(0,0,0,0.12)` : "none",
+                                            transform: isActiveTheme ? "translateY(-1px)" : "none",
+                                            transition: "all 0.2s"
+                                        }}
+                                    >
+                                        {isActiveTheme ? `✦ ${themeOption.label}` : themeOption.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
                     </div>
                 </div>
 
                 {showTasks && <TasksPanel tasks={tasks} onToggle={id => setTasks(t => t.map(tk => tk.id === id ? { ...tk, done: !tk.done } : tk))} onEditTask={(id, v) => setTasks(t => t.map(tk => tk.id === id ? { ...tk, text: v } : tk))} onRequestSplit={t => send(`split the task "${t}" into subtasks`)} onAddTask={manualAddTask} accent={accent} light={light} onClose={() => setShowTasks(false)} ambient={ambient} />}
                 {showCal && <CalendarPanel events={events} onDeleteEvent={id => setEvents(e => e.filter(ev => ev.id !== id))} onAddEvent={manualAddEvent} accent={accent} light={light} onClose={() => setShowCal(false)} ambient={ambient} />}
                 {showBudget && <BudgetPanel expenses={expenses} budget={budget} accent={accent} light={light} onClose={() => setShowBudget(false)} onDeleteExpense={id => setExpenses(e => e.filter(ex => ex.id !== id))} onAddExpense={manualAddExpense} ambient={ambient} />}
+                {showRewards && <RewardsPanel completedTasks={completedTasks} weeklyGoalTarget={weeklyGoalTarget} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" />}
 
                 {postits.map(p => <PostIt key={p.id} id={p.id} content={p.content} color={p.color} initialX={p.x} initialY={p.y} onRemove={id => setPostits(pp => pp.filter(n => n.id !== id))} onEdit={(id, v) => setPostits(pp => pp.map(n => n.id === id ? { ...n, content: v } : n))} />)}
                 {timers.map(t => <TimerWidget key={t.id} id={t.id} minutes={t.minutes} label={t.label} onRemove={id => setTimers(tt => tt.filter(n => n.id !== id))} light={light} />)}
                 {widgets.map(w => w.type === "clock" ? <ClockWidget key={w.id} id={w.id} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} light={light} /> : w.type === "quote" ? <QuoteWidget key={w.id} id={w.id} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} light={light} /> : null)}
 
-                {!postits.length && !timers.length && !widgets.length && !showTasks && !showCal && !showBudget && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", color: txs, userSelect: "none", zIndex: 5 }}>
-                    <div style={{ fontSize: 40, marginBottom: 8 }}>✦</div><div style={{ fontFamily: "'JetBrains Mono'", fontSize: 10, letterSpacing: 2 }}>CANVAS EMPTY</div>
+                {!postits.length && !timers.length && !widgets.length && !showTasks && !showCal && !showBudget && !showRewards && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", color: txs, userSelect: "none", zIndex: 5 }}>
+                    <div style={{ fontSize: 40, marginBottom: 8 }}>✦</div><div style={{ fontFamily: "'JetBrains Mono'", fontSize: 10, letterSpacing: 2 }}>YOUR STUDENT DASHBOARD IS CLEAR</div><div style={{ marginTop: 8, fontSize: 11, color: txm }}>Turn panels back on or ask the copilot to add something.</div>
                 </div>}
             </div>
 
             {/* Chat */}
-            <div style={{ width: 300, display: "flex", flexDirection: "column", background: light ? "rgba(0,0,0,0.03)" : "rgba(0,0,0,0.3)", backdropFilter: "blur(40px)", borderLeft: `1px solid ${pBd}`, transition: "all 0.8s" }}>
+            <div style={{ width: 320, display: "flex", flexDirection: "column", background: light ? "rgba(255,255,255,0.42)" : "rgba(5,7,16,0.42)", backdropFilter: "blur(40px)", borderLeft: `1px solid ${pBd}`, boxShadow: "-10px 0 30px rgba(0,0,0,0.08)", transition: "all 0.8s" }}>
                 <div style={{ padding: "14px 15px 10px", borderBottom: `1px solid ${pBd}` }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <div style={{ width: 26, height: 26, borderRadius: 7, background: `linear-gradient(135deg, ${accent}, ${accent}88)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, transition: "background 0.8s" }}>⚡</div>
                         <div>
-                            <div style={{ fontSize: 12, fontWeight: 600 }}>Dashboard AI</div>
-                            <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 1 }}>{loading ? "THINKING..." : LLM_CONFIG.mode === "local" ? "LOCAL LLM" : "CLAUDE • API"}</div>
+                            <div style={{ fontSize: 12, fontWeight: 600 }}>Study Copilot</div>
+                            <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 1 }}>{loading ? "THINKING..." : "LOCAL LLM"}</div>
                         </div>
                     </div>
                 </div>
@@ -922,8 +1063,15 @@ export default function App() {
                     <div ref={scrollRef} />
                 </div>
                 <div style={{ padding: "8px 10px 10px" }}>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "0 2px 8px" }}>
+                        {["split my assignment into subtasks", "log €8 lunch", "add study timer", "make it cozy"].map((prompt) => (
+                            <button key={prompt} onClick={() => send(prompt)} disabled={loading} style={{ padding: "5px 8px", borderRadius: 999, border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.07)"}`, background: light ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.035)", color: txm, fontSize: 9, fontFamily: "'JetBrains Mono'", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}>
+                                {prompt}
+                            </button>
+                        ))}
+                    </div>
                     <div style={{ display: "flex", gap: 5, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.04)", border: `1px solid ${light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.08)"}`, borderRadius: 10, padding: "3px 3px 3px 11px", alignItems: "center" }}>
-                        <input ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} placeholder={loading ? "Thinking..." : "Ask me anything..."} disabled={loading}
+                        <input ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} placeholder={loading ? "Thinking..." : "Ask about deadlines, money, or focus..."} disabled={loading}
                             style={{ flex: 1, background: "none", border: "none", outline: "none", color: tx, fontSize: 11.5, fontFamily: "'DM Sans'", opacity: loading ? 0.5 : 1 }} />
                         <button onClick={() => send()} disabled={loading} style={{ width: 28, height: 28, borderRadius: 7, border: "none", flexShrink: 0, background: loading ? "rgba(128,128,128,0.25)" : `linear-gradient(135deg, ${accent}, ${accent}88)`, cursor: loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#fff", transition: "background 0.5s" }}>↑</button>
                     </div>
