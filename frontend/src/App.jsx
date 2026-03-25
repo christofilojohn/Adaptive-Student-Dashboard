@@ -784,7 +784,7 @@ function WeatherWidget({ light, accent, ambient, onClose }) {
         fetch(
             `https://api.open-meteo.com/v1/forecast?latitude=${selected.latitude}&longitude=${selected.longitude}&current=temperature_2m,apparent_temperature,weathercode,wind_speed_10m,relative_humidity_2m&wind_speed_unit=kmh`,
             { signal: ctrl.signal }
-        ).then(r => r.json()).then(wx => {
+        ).then(r => { if (!r.ok) throw new Error(`Weather API error: ${r.status}`); return r.json(); }).then(wx => {
             setWeather({ ...wx.current, name: selected.name, country_code: selected.country_code });
             setFetching(false);
         }).catch(e => {
