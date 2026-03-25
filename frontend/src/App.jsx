@@ -733,6 +733,94 @@ function RewardsPanel({ completedTasks, weeklyGoalTarget, weeklyStreak, accent, 
 function TypingDots() { return <div style={{ display: "flex", gap: 3, padding: "8px 12px", alignSelf: "flex-start" }}>{[0, 1, 2].map(i => <div key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.3)", animation: `bk 1.2s ${i * .15}s infinite ease-in-out` }} />)}</div>; }
 
 // ═══════════════════════════════════════════════════
+// WEATHER WIDGET  (Open-Meteo — free, no API key)
+// ═══════════════════════════════════════════════════
+const WMO_CODES = {
+    0: ["☀️", "Clear sky"], 1: ["🌤️", "Mainly clear"], 2: ["⛅", "Partly cloudy"], 3: ["☁️", "Overcast"],
+    45: ["🌫️", "Fog"], 48: ["🌫️", "Icy fog"],
+    51: ["🌦️", "Light drizzle"], 53: ["🌦️", "Drizzle"], 55: ["🌦️", "Heavy drizzle"],
+    61: ["🌧️", "Light rain"], 63: ["🌧️", "Rain"], 65: ["🌧️", "Heavy rain"],
+    71: ["🌨️", "Light snow"], 73: ["🌨️", "Snow"], 75: ["❄️", "Heavy snow"], 77: ["❄️", "Snow grains"],
+    80: ["🌦️", "Light showers"], 81: ["🌧️", "Showers"], 82: ["🌧️", "Heavy showers"],
+    85: ["🌨️", "Snow showers"], 86: ["❄️", "Heavy snow showers"],
+    95: ["⛈️", "Thunderstorm"], 96: ["⛈️", "Thunderstorm"], 99: ["⛈️", "Thunderstorm"],
+};
+
+function WeatherWidget({ light, accent, ambient, onClose }) {
+    const [city, setCity] = useState("Dublin");
+    const [weather, setWeather] = useState(null);
+    const [fetching, setFetching] = useState(false);
+    const [err, setErr] = useState(null);
+    const tx = light ? "#2d3436" : "#fff";
+    const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
+
+    useEffect(() => {
+        const ctrl = new AbortController();
+        const t = setTimeout(async () => {
+            if (!city.trim()) return;
+            setFetching(true); setErr(null);
+            try {
+                const geo = await fetch(
+                    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city.trim())}&count=1&language=en&format=json`,
+                    { signal: ctrl.signal }
+                ).then(r => r.json());
+                if (!geo.results?.length) { setErr("City not found"); setFetching(false); return; }
+                const { latitude, longitude, name, country_code } = geo.results[0];
+                const wx = await fetch(
+                    `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,apparent_temperature,weathercode,wind_speed_10m,relative_humidity_2m&wind_speed_unit=kmh`,
+                    { signal: ctrl.signal }
+                ).then(r => r.json());
+                setWeather({ ...wx.current, name, country_code });
+            } catch (e) {
+                if (e.name !== "AbortError") setErr("Couldn't reach weather service");
+            }
+            setFetching(false);
+        }, 600);
+        return () => { clearTimeout(t); ctrl.abort(); };
+    }, [city]);
+
+    const [icon, desc] = weather ? (WMO_CODES[weather.weathercode] ?? ["🌡️", "Unknown"]) : ["🌡️", "—"];
+
+    return (
+        <Panel x={380} y={24} width={210} title="Weather" icon="🌤️" onClose={onClose} ambient={ambient} light={light} accent={accent}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <EditableText
+                        value={city}
+                        onChange={v => setCity(v)}
+                        maxLen={40}
+                        style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 1.5, textTransform: "uppercase", color: accent }}
+                    />
+                    {weather && <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: txm, letterSpacing: 1 }}>{weather.country_code?.toUpperCase()}</span>}
+                </div>
+
+                {fetching && <div style={{ fontSize: 11, color: txm, fontFamily: "'JetBrains Mono'" }}>Fetching…</div>}
+                {err && <div style={{ fontSize: 11, color: "#e17055" }}>{err}</div>}
+
+                {weather && !fetching && <>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <span style={{ fontSize: 34, lineHeight: 1 }}>{icon}</span>
+                        <div>
+                            <div style={{ fontSize: 28, fontWeight: 700, color: tx, lineHeight: 1, fontFamily: "'JetBrains Mono'" }}>{Math.round(weather.temperature_2m)}°</div>
+                            <div style={{ fontSize: 9.5, color: txm, marginTop: 3 }}>Feels like {Math.round(weather.apparent_temperature)}°</div>
+                        </div>
+                    </div>
+                    <div style={{ fontSize: 11, color: tx }}>{desc}</div>
+                    <div style={{ display: "flex", gap: 12 }}>
+                        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: txm }}>💧 {weather.relative_humidity_2m}%</span>
+                        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: txm }}>💨 {Math.round(weather.wind_speed_10m)} km/h</span>
+                    </div>
+                </>}
+
+                <div style={{ fontSize: 7.5, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 0.5, opacity: 0.7 }}>
+                    Tap city name to change · Open-Meteo
+                </div>
+            </div>
+        </Panel>
+    );
+}
+
+// ═══════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════
 export default function App() {
@@ -740,7 +828,7 @@ export default function App() {
     const [greeting, setGreeting] = useState("Plan your week, not just your tasks.");
     const [accent, setAccent] = useState("#00cec9");
     const [ambient, setAmbient] = useState({ ...DEFAULT_AMBIENT });
-    const [showTasks, setShowTasks] = useState(true), [showCal, setShowCal] = useState(true), [showBudget, setShowBudget] = useState(true), [showRewards, setShowRewards] = useState(true);
+    const [showTasks, setShowTasks] = useState(true), [showCal, setShowCal] = useState(true), [showBudget, setShowBudget] = useState(true), [showRewards, setShowRewards] = useState(true), [showWeather, setShowWeather] = useState(true);
     const [postits, setPostits] = useState([]);
     const [tasks, setTasks] = useState([
         { id: "t1", text: "Finish adaptive apps UI polish 🎨", priority: "high", done: false },
@@ -885,7 +973,7 @@ export default function App() {
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     const txs = light ? "rgba(45,52,54,0.12)" : "rgba(255,255,255,0.1)";
     const pBd = light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)";
-    const togs = [{ k: "t", l: "Tasks", s: showTasks, f: setShowTasks, i: "✓" }, { k: "c", l: "Calendar", s: showCal, f: setShowCal, i: "📅" }, { k: "b", l: "Budget", s: showBudget, f: setShowBudget, i: "💰" }, { k: "r", l: "Rewards", s: showRewards, f: setShowRewards, i: "⭐" }];
+    const togs = [{ k: "t", l: "Tasks", s: showTasks, f: setShowTasks, i: "✓" }, { k: "c", l: "Calendar", s: showCal, f: setShowCal, i: "📅" }, { k: "b", l: "Budget", s: showBudget, f: setShowBudget, i: "💰" }, { k: "r", l: "Rewards", s: showRewards, f: setShowRewards, i: "⭐" }, { k: "w", l: "Weather", s: showWeather, f: setShowWeather, i: "🌤️" }];
 
     const activeTasks = tasks.filter(t => !t.done && !t.isParent).length;
     const completedTasks = tasks.filter(t => t.done).length;
@@ -1033,12 +1121,13 @@ export default function App() {
                 {showCal && <CalendarPanel events={events} onDeleteEvent={id => setEvents(e => e.filter(ev => ev.id !== id))} onAddEvent={manualAddEvent} accent={accent} light={light} onClose={() => setShowCal(false)} ambient={ambient} />}
                 {showBudget && <BudgetPanel expenses={expenses} budget={budget} accent={accent} light={light} onClose={() => setShowBudget(false)} onDeleteExpense={id => setExpenses(e => e.filter(ex => ex.id !== id))} onAddExpense={manualAddExpense} ambient={ambient} />}
                 {showRewards && <RewardsPanel completedTasks={completedTasks} weeklyGoalTarget={weeklyGoalTarget} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" />}
+                {showWeather && <WeatherWidget light={light} accent={accent} ambient={ambient} onClose={() => setShowWeather(false)} />}
 
                 {postits.map(p => <PostIt key={p.id} id={p.id} content={p.content} color={p.color} initialX={p.x} initialY={p.y} onRemove={id => setPostits(pp => pp.filter(n => n.id !== id))} onEdit={(id, v) => setPostits(pp => pp.map(n => n.id === id ? { ...n, content: v } : n))} />)}
                 {timers.map(t => <TimerWidget key={t.id} id={t.id} minutes={t.minutes} label={t.label} onRemove={id => setTimers(tt => tt.filter(n => n.id !== id))} light={light} />)}
                 {widgets.map(w => w.type === "clock" ? <ClockWidget key={w.id} id={w.id} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} light={light} /> : w.type === "quote" ? <QuoteWidget key={w.id} id={w.id} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} light={light} /> : null)}
 
-                {!postits.length && !timers.length && !widgets.length && !showTasks && !showCal && !showBudget && !showRewards && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", color: txs, userSelect: "none", zIndex: 5 }}>
+                {!postits.length && !timers.length && !widgets.length && !showTasks && !showCal && !showBudget && !showRewards && !showWeather && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", color: txs, userSelect: "none", zIndex: 5 }}>
                     <div style={{ fontSize: 40, marginBottom: 8 }}>✦</div><div style={{ fontFamily: "'JetBrains Mono'", fontSize: 10, letterSpacing: 2 }}>YOUR STUDENT DASHBOARD IS CLEAR</div><div style={{ marginTop: 8, fontSize: 11, color: txm }}>Turn panels back on or ask the copilot to add something.</div>
                 </div>}
             </div>
