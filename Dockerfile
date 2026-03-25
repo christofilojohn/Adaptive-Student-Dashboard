@@ -131,7 +131,8 @@ ENV LLM_NGL=999
 # Pre-create the nginx pid file so the dashboard user can write to it.
 RUN useradd --system --no-create-home --shell /sbin/nologin dashboard \
     && sed -i 's/^user www-data;/user dashboard;/' /etc/nginx/nginx.conf \
-    && chown -R dashboard:dashboard /var/www/dashboard /var/log \
+    && mkdir -p /var/lib/nginx/body /var/lib/nginx/proxy \
+    && chown -R dashboard:dashboard /var/www/dashboard /var/log /var/lib/nginx \
     && touch /run/nginx.pid && chown dashboard:dashboard /run/nginx.pid
 USER dashboard
 

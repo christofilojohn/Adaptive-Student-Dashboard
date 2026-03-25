@@ -26,6 +26,19 @@ echo ""
 
 # Download mode — must be checked BEFORE the model-existence guard
 if [[ "${1:-}" == "download-model" ]]; then
+    # Verify the target directory is writable before attempting the download.
+    # The runtime compose services mount the volume read-only (:ro); only the
+    # dedicated download-model compose service mounts it writable.
+    MODEL_DIR="$(dirname "$MODEL_PATH")"
+    if ! touch "$MODEL_DIR/.write_test" 2>/dev/null; then
+        echo -e "${RED}[✗] Cannot write to $MODEL_DIR — the volume is mounted read-only.${NC}"
+        echo ""
+        echo "Use the dedicated download service instead:"
+        echo "  docker compose --profile download run download-model"
+        exit 1
+    fi
+    rm -f "$MODEL_DIR/.write_test"
+
     echo "Downloading Phi-3.5-mini-instruct..."
     if ! command -v wget &>/dev/null; then
         echo -e "${RED}[✗] wget is required but not found in PATH${NC}"
