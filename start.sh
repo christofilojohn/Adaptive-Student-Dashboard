@@ -282,9 +282,10 @@ start_frontend() {
   (
     cd "$FRONTEND_DIR"
 
-    if [[ ! -d "node_modules" ]]; then
-      log "Installing npm dependencies (first run)..."
-      npm ci --silent
+    # Re-install if node_modules is missing or package.json is newer (catches added packages)
+    if [[ ! -d "node_modules" ]] || [[ "package.json" -nt "node_modules/.package-lock.json" ]]; then
+      log "Installing npm dependencies..."
+      npm install --silent
       ok "Dependencies installed"
     fi
 
