@@ -197,16 +197,22 @@ async function callAmbientLLM(contextMsg) {
 // ═══════════════════════════════════════════════════
 // HOOKS & HELPERS
 // ═══════════════════════════════════════════════════
+// Shared context so every draggable knows how tall the locked header area is
+const HeaderLockCtx = React.createContext(0);
+
 function useDraggable(ix, iy) {
+    const minY = useContext(HeaderLockCtx);
     const [pos, setPos] = useState({ x: ix, y: iy });
     const dr = useRef(false), off = useRef({ x: 0, y: 0 });
     const onMouseDown = useCallback((e) => {
         if (e.target.closest("button, input, textarea, select, a, [data-nodrag]")) return;
         e.preventDefault(); dr.current = true; off.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
-        const mv = ev => { if (dr.current) setPos({ x: ev.clientX - off.current.x, y: ev.clientY - off.current.y }); };
+        const mv = ev => {
+            if (dr.current) setPos({ x: ev.clientX - off.current.x, y: Math.max(minY, ev.clientY - off.current.y) });
+        };
         const up = () => { dr.current = false; window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
         window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
-    }, [pos.x, pos.y]);
+    }, [pos.x, pos.y, minY]);
     return { pos, onMouseDown };
 }
 
@@ -930,6 +936,14 @@ export default function App() {
     const [msgs, setMsgs] = useState([{ role: "assistant", text: `Ready! (${LLM_CONFIG.mode === "local" ? "local LLM" : "API"})\n\n• "make it cozy"\n• "check off documentation"\n• "meeting this friday 2pm"\n• "I spent €12 on lunch"\n• "focus mode"` }]);
 
     const scrollRef = useRef(null), inputRef = useRef(null), idRef = useRef(300), ambientTimerRef = useRef(null);
+    const headerRef = useRef(null);
+    const [headerLockY, setHeaderLockY] = useState(0);
+    useEffect(() => {
+        if (!headerRef.current) return;
+        const ro = new ResizeObserver(entries => setHeaderLockY(entries[0].contentRect.height + 8));
+        ro.observe(headerRef.current);
+        return () => ro.disconnect();
+    }, []);
     const gid = () => `i${idRef.current++}`;
     useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, loading]);
 
@@ -1125,8 +1139,8 @@ export default function App() {
                 {ambient.particles !== "none" && <Particles type={ambient.particles} color={ambient.glowColor !== "transparent" ? ambient.glowColor : accent} />}
                 <LennyBuddy mood={lennyMood} glowColor={ambient.glowColor !== "transparent" ? ambient.glowColor : accent} light={light} loading={loading} />
 
-                {/* Header */}
-                <div style={{ position: "relative", zIndex: 50, padding: "14px 24px 8px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}>
+                {/* Header — ref lets ResizeObserver measure the locked zone */}
+                <div ref={headerRef} style={{ position: "relative", zIndex: 50, padding: "14px 24px 8px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}>
                     <div style={{ maxWidth: 560 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
                             <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, color: txm, letterSpacing: 1.7, textTransform: "uppercase" }}>Adaptive Dashboard</span>
@@ -1200,6 +1214,7 @@ export default function App() {
                     </div>
                 </div>
 
+                <HeaderLockCtx.Provider value={headerLockY}>
                 {showTasks && <TasksPanel tasks={tasks} onToggle={id => setTasks(t => t.map(tk => tk.id === id ? { ...tk, done: !tk.done } : tk))} onEditTask={(id, v) => setTasks(t => t.map(tk => tk.id === id ? { ...tk, text: v } : tk))} onRequestSplit={t => send(`split the task "${t}" into subtasks`)} onAddTask={manualAddTask} accent={accent} light={light} onClose={() => setShowTasks(false)} ambient={ambient} />}
                 {showCal && <CalendarPanel events={events} onDeleteEvent={id => setEvents(e => e.filter(ev => ev.id !== id))} onAddEvent={manualAddEvent} accent={accent} light={light} onClose={() => setShowCal(false)} ambient={ambient} />}
                 {showBudget && <BudgetPanel expenses={expenses} budget={budget} accent={accent} light={light} onClose={() => setShowBudget(false)} onDeleteExpense={id => setExpenses(e => e.filter(ex => ex.id !== id))} onAddExpense={manualAddExpense} ambient={ambient} />}
@@ -1213,6 +1228,7 @@ export default function App() {
                 {!postits.length && !timers.length && !widgets.length && !showTasks && !showCal && !showBudget && !showRewards && !showWeather && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", color: txs, userSelect: "none", zIndex: 5 }}>
                     <div style={{ fontSize: 40, marginBottom: 8 }}>✦</div><div style={{ fontFamily: "'JetBrains Mono'", fontSize: 10, letterSpacing: 2 }}>YOUR STUDENT DASHBOARD IS CLEAR</div><div style={{ marginTop: 8, fontSize: 11, color: txm }}>Turn panels back on or ask the copilot to add something.</div>
                 </div>}
+                </HeaderLockCtx.Provider>
             </div>
 
             {/* Chat */}
