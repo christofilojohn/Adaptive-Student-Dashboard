@@ -12,6 +12,16 @@ const POSTIT_CHAR_LIMIT = 120;
 const TASK_CHAR_LIMIT = 80;
 
 // ═══════════════════════════════════════════════════
+// TCD CONSTANTS
+// ═══════════════════════════════════════════════════
+const TCD_SEMESTERS = { michaelmas: "Michaelmas", hilary: "Hilary", trinity: "Trinity Term", yearlong: "Year-Long" };
+const TCD_SEMESTER_COLORS = { michaelmas: "#e17055", hilary: "#00cec9", trinity: "#00b894", yearlong: "#6c5ce7" };
+const MODULE_COLORS = ["#6c5ce7", "#00cec9", "#e17055", "#00b894", "#fdcb6e", "#e84393", "#a29bfe", "#74b9ff", "#55efc4", "#ff7675"];
+const TIMETABLE_HOURS = Array.from({ length: 13 }, (_, i) => `${(i + 8).toString().padStart(2, "0")}:00`);
+const WEEK_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday"];
+const WEEK_DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+
+// ═══════════════════════════════════════════════════
 // SMART EMOJI GUESSER
 // ═══════════════════════════════════════════════════
 const HAS_EMOJI = /[\p{Emoji_Presentation}\p{Extended_Pictographic}]/u;
@@ -102,12 +112,20 @@ ACTIONS you can use:
 {"type":"adjust_ambient","glowColor":"#e17055","glowIntensity":0.12,"borderWarmth":0.7,"particles":"fireflies","mood":"cozy"}
 {"type":"change_bg","color":"#1a1a2e"}
 {"type":"clear_canvas"}
+{"type":"add_module","code":"CS3012","name":"Software Engineering 💻","credits":5,"semester":"michaelmas","moduleType":"lecture"}
+{"type":"remove_module","code":"CS3012"}
+{"type":"show_tcd_modules"}
+{"type":"show_timetable"}
+{"type":"add_timetable_slot","moduleCode":"CS3012","day":"monday","startTime":"09:00","endTime":"10:00","slotType":"lecture","room":"Lloyd 1"}
 
 split_task KEEPS the parent and adds subtasks below it.
 adjust_ambient: particles=none|fireflies|stars|rain|sparkle. Use ONLY for emotional content.
 Themes: cozy, focus, ocean, sunset, forest, midnight, minimal
 Priority: high, medium, low
 Categories: food, transport, entertainment, shopping, bills, health, other
+Module semesters: michaelmas, hilary, trinity, yearlong
+Module types: lecture, tutorial, lab, seminar
+TCD year names: Junior Freshman (1), Senior Freshman (2), Junior Sophister (3), Senior Sophister (4)
 
 FORMAT: {"actions":[...],"reply":"short message"}
 
@@ -912,6 +930,341 @@ function WeatherWidget({ light, accent, ambient, onClose }) {
 }
 
 // ═══════════════════════════════════════════════════
+// TCD SEARCH & PARSER
+// ═══════════════════════════════════════════════════
+async function searchTCDCourse(courseName) {
+    const query = `Trinity College Dublin "${courseName}" modules undergraduate site:tcd.ie`;
+    const res = await fetch("/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ q: query, num: 10 }),
+    });
+    if (!res.ok) throw new Error(`Search server returned ${res.status} — is it running?`);
+    return res.json();
+}
+
+function parseTCDModulesFromResults(results) {
+    const modules = [];
+    const seen = new Set();
+    const codeRe = /\b([A-Z]{2,4})\s?(\d{4})\b/g;
+    const ectsRe = /(\d+)\s*(?:ECTS|credit)/i;
+    const semRe = { michaelmas: /michaelmas|mt\b/i, hilary: /hilary|ht\b/i, trinity: /trinity\s*term|tt\b/i };
+
+    const items = (results.organic || []);
+    if (results.answerBox) items.unshift({ title: results.answerBox.title || "", snippet: results.answerBox.answer || "" });
+
+    items.forEach(item => {
+        const text = `${item.title || ""} ${item.snippet || ""}`;
+        codeRe.lastIndex = 0;
+        let match;
+        while ((match = codeRe.exec(text)) !== null) {
+            const code = `${match[1]}${match[2]}`;
+            if (seen.has(code)) continue;
+            seen.add(code);
+
+            const idx = match.index;
+            const ctx = text.slice(idx, idx + code.length + 80);
+            const ectsMatch = ctx.match(ectsRe);
+            const credits = ectsMatch ? parseInt(ectsMatch[1]) : 5;
+
+            let semester = "michaelmas";
+            const surrounding = text.slice(Math.max(0, idx - 120), idx + 120);
+            for (const [sem, re] of Object.entries(semRe)) {
+                if (re.test(surrounding)) { semester = sem; break; }
+            }
+
+            const afterCode = ctx.slice(code.length).replace(/^\s*[-–:]\s*/, "").trim();
+            const rawName = afterCode.split(/[,\n;:(]/)[0].trim();
+            const name = rawName.slice(0, 60);
+            if (name.length > 2) modules.push({ code, name, credits, semester, moduleType: "lecture" });
+        }
+    });
+    return modules.slice(0, 25);
+}
+
+// ═══════════════════════════════════════════════════
+// TCD MODULES PANEL
+// ═══════════════════════════════════════════════════
+function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemoveModule, accent, light, onClose, ambient }) {
+    const [searching, setSearching] = useState(false);
+    const [searchQuery, setSearchQuery] = useState(tcdDegree?.name || "");
+    const [searchYear, setSearchYear] = useState(tcdDegree?.year || 1);
+    const [searchResults, setSearchResults] = useState(null);
+    // Privacy: require explicit confirmation before the first internet request.
+    // Persisted to sessionStorage so it resets when the tab closes.
+    const [warnAcked, setWarnAcked] = useState(() => sessionStorage.getItem("tcd_search_acked") === "1");
+    const [showWarn, setShowWarn] = useState(false);
+    const [addForm, setAddForm] = useState(false);
+    const [formCode, setFormCode] = useState(""), [formName, setFormName] = useState("");
+    const [formCredits, setFormCredits] = useState("5"), [formSemester, setFormSemester] = useState("michaelmas"), [formType, setFormType] = useState("lecture");
+
+    const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
+    const tx = light ? "#2d3436" : "#fff";
+    const bd = light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.08)";
+    const totalCredits = modules.reduce((s, m) => s + (m.credits || 5), 0);
+    const semGroups = {};
+    modules.forEach(m => { const s = m.semester || "michaelmas"; if (!semGroups[s]) semGroups[s] = []; semGroups[s].push(m); });
+
+    const runSearch = async () => {
+        if (!searchQuery.trim()) return;
+        setShowWarn(false);
+        setSearching(true);
+        try {
+            const data = await searchTCDCourse(searchQuery);
+            const parsed = parseTCDModulesFromResults(data);
+            setSearchResults({ parsed, query: searchQuery });
+            onSetDegree({ name: searchQuery, year: searchYear, type: searchYear > 4 ? "postgrad" : "undergraduate", college: "Trinity College Dublin" });
+        } catch (err) {
+            setSearchResults({ error: err.message, parsed: [] });
+        }
+        setSearching(false);
+    };
+
+    const handleSearchClick = () => {
+        if (!searchQuery.trim()) return;
+        if (warnAcked) { runSearch(); return; }
+        setShowWarn(true);
+    };
+
+    const confirmSearch = () => {
+        sessionStorage.setItem("tcd_search_acked", "1");
+        setWarnAcked(true);
+        runSearch();
+    };
+
+    const addManual = () => {
+        if (!formCode.trim() || !formName.trim()) return;
+        onAddModule({ id: `m${Date.now()}`, code: formCode.trim().toUpperCase(), name: formName.trim(), credits: parseInt(formCredits) || 5, semester: formSemester, moduleType: formType, color: MODULE_COLORS[modules.length % MODULE_COLORS.length] });
+        setFormCode(""); setFormName(""); setFormCredits("5"); setAddForm(false);
+    };
+
+    const importAll = () => {
+        (searchResults?.parsed || []).forEach((m, i) => onAddModule({ ...m, id: `m${Date.now()}${i}`, color: MODULE_COLORS[(modules.length + i) % MODULE_COLORS.length] }));
+        setSearchResults(null);
+    };
+
+    const selStyle = { background: light ? "rgba(255,255,255,0.8)" : "rgba(30,30,50,0.8)", border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, outline: "none", colorScheme: light ? "light" : "dark" };
+    const inStyle = (extra) => ({ background: "transparent", border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 6px", fontSize: 10, color: tx, outline: "none", fontFamily: "'DM Sans'", ...extra });
+
+    return (
+        <Panel x={650} y={320} width={380} title={`TCD Modules · ${modules.length} registered · ${totalCredits} ECTS`} icon="🎓" light={light} onClose={onClose} ambient={ambient} accent={accent}>
+            {/* Degree search bar */}
+            <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 8, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.04)", border: `1px solid ${bd}` }}>
+                {tcdDegree && <div style={{ fontSize: 8, fontFamily: "'JetBrains Mono'", color: accent, marginBottom: 5, letterSpacing: 1 }}>🎓 {tcdDegree.college} · {tcdDegree.name} · {tcdDegree.year > 4 ? `Postgrad Yr ${tcdDegree.year - 4}` : ["","JF","SF","JS","SS"][tcdDegree.year]}</div>}
+                <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
+                    <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSearchClick()} placeholder="Course name (e.g. Computer Science)" data-nodrag
+                        style={{ flex: 1, background: "transparent", border: "none", outline: "none", fontSize: 11, color: tx, fontFamily: "'DM Sans'", minWidth: 120 }} />
+                    <select value={searchYear} onChange={e => setSearchYear(Number(e.target.value))} data-nodrag style={selStyle}>
+                        <option value={1}>JF · Yr 1</option><option value={2}>SF · Yr 2</option>
+                        <option value={3}>JS · Yr 3</option><option value={4}>SS · Yr 4</option>
+                        <option value={5}>PG Yr 1</option><option value={6}>PG Yr 2</option>
+                    </select>
+                    <button onClick={handleSearchClick} disabled={searching} style={{ padding: "3px 9px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, opacity: searching ? 0.6 : 1 }}>
+                        {searching ? "..." : "🔍 Search TCD"}
+                    </button>
+                </div>
+            </div>
+
+            {/* Privacy warning — shown once per session before the first internet request */}
+            {showWarn && (
+                <div className="anim-panel" style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 8, background: light ? "rgba(253,203,110,0.15)" : "rgba(253,203,110,0.1)", border: "1px solid rgba(253,203,110,0.4)" }} data-nodrag>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: "#e67e22", marginBottom: 4, fontFamily: "'JetBrains Mono'" }}>⚠ External search</div>
+                    <div style={{ fontSize: 10, color: tx, lineHeight: 1.5, marginBottom: 8 }}>
+                        Searching for <strong>"{searchQuery}"</strong> will send a query to <strong>DuckDuckGo</strong> via the local search server. This is the <em>only</em> part of this dashboard that uses an internet connection — everything else runs on-device.
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                        <button onClick={confirmSearch} style={{ flex: 1, padding: "4px", borderRadius: 5, fontSize: 9, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}55`, color: accent, fontFamily: "'JetBrains Mono'" }}>Search anyway</button>
+                        <button onClick={() => setShowWarn(false)} style={{ padding: "4px 10px", borderRadius: 5, fontSize: 9, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>Cancel</button>
+                    </div>
+                </div>
+            )}
+
+            {/* Search results */}
+            {searchResults?.error && <div style={{ marginBottom: 8, padding: "6px 8px", borderRadius: 6, background: "rgba(231,76,60,0.08)", border: "1px solid rgba(231,76,60,0.2)", fontSize: 10, color: "#e74c3c" }}>Search failed: {searchResults.error}</div>}
+            {searchResults && !searchResults.error && (
+                <div className="anim-panel" style={{ marginBottom: 10, padding: 8, borderRadius: 8, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)", border: `1px solid ${accent}33` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: accent }}>{searchResults.parsed.length > 0 ? `Found ${searchResults.parsed.length} modules` : "No modules found in snippets"}</span>
+                        <div style={{ display: "flex", gap: 4 }}>
+                            {searchResults.parsed.length > 0 && <button onClick={importAll} style={{ padding: "2px 7px", borderRadius: 4, fontSize: 8, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, fontFamily: "'JetBrains Mono'" }}>Import all</button>}
+                            <button onClick={() => setSearchResults(null)} style={{ padding: "2px 6px", borderRadius: 4, fontSize: 8, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>×</button>
+                        </div>
+                    </div>
+                    {searchResults.parsed.length === 0 && <div style={{ fontSize: 10, color: txm, fontStyle: "italic" }}>TCD course pages may require deeper scraping. Add modules manually below, or refine the search query.</div>}
+                    <div style={{ maxHeight: 110, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
+                        {searchResults.parsed.map((m, i) => (
+                            <div key={i} style={{ display: "flex", gap: 5, alignItems: "center", padding: "2px 0" }}>
+                                <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, fontWeight: 600, color: TCD_SEMESTER_COLORS[m.semester], minWidth: 52 }}>{m.code}</span>
+                                <span style={{ flex: 1, fontSize: 10, color: tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
+                                <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: txm }}>{m.credits}cr</span>
+                                <button onClick={() => onAddModule({ ...m, id: `m${Date.now()}${i}`, color: MODULE_COLORS[(modules.length + i) % MODULE_COLORS.length] })}
+                                    style={{ padding: "1px 6px", borderRadius: 3, fontSize: 9, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, lineHeight: 1 }}>+</button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Module list grouped by semester */}
+            {modules.length === 0 && !searchResults && !showWarn && <div style={{ fontSize: 11, color: txm, fontStyle: "italic", textAlign: "center", padding: "10px 0" }}>Search your TCD course above or add modules manually</div>}
+            {["michaelmas", "hilary", "trinity", "yearlong"].filter(s => semGroups[s]?.length > 0).map(sem => (
+                <div key={sem} style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 8, fontFamily: "'JetBrains Mono'", letterSpacing: 1.5, textTransform: "uppercase", color: TCD_SEMESTER_COLORS[sem], marginBottom: 4 }}>{TCD_SEMESTERS[sem]}</div>
+                    {semGroups[sem].map(m => (
+                        <div key={m.id} className="anim-item" style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0", borderBottom: `1px solid ${bd}` }}>
+                            <div style={{ width: 3, height: 30, borderRadius: 2, background: m.color || TCD_SEMESTER_COLORS[sem], flexShrink: 0 }} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                                    <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, fontWeight: 600, color: m.color || accent, flexShrink: 0 }}>{m.code}</span>
+                                    <span style={{ fontSize: 10, color: tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
+                                </div>
+                                <div style={{ display: "flex", gap: 5, marginTop: 1 }}>
+                                    <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: txm }}>{m.credits} ECTS</span>
+                                    <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: txm }}>· {m.moduleType || "lecture"}</span>
+                                    {m.deadline && <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: "#e74c3c" }}>⚡ {m.deadline}</span>}
+                                </div>
+                            </div>
+                            <button onClick={() => onRemoveModule(m.id)} style={{ fontSize: 12, background: "none", border: "none", cursor: "pointer", color: txm, opacity: 0.4, padding: "0 2px", flexShrink: 0 }}>×</button>
+                        </div>
+                    ))}
+                </div>
+            ))}
+
+            {/* Manual add form */}
+            {addForm ? (
+                <div className="anim-panel" style={{ padding: 8, borderRadius: 8, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)", border: `1px solid ${bd}` }} data-nodrag>
+                    <div style={{ display: "flex", gap: 4, marginBottom: 4 }}>
+                        <input value={formCode} onChange={e => setFormCode(e.target.value)} placeholder="Code (CS3012)" data-nodrag style={inStyle({ width: 90, fontFamily: "'JetBrains Mono'", fontSize: 9 })} />
+                        <input value={formName} onChange={e => setFormName(e.target.value)} placeholder="Module name" data-nodrag style={inStyle({ flex: 1 })} />
+                    </div>
+                    <div style={{ display: "flex", gap: 4, marginBottom: 4 }}>
+                        <input value={formCredits} onChange={e => setFormCredits(e.target.value)} placeholder="ECTS" data-nodrag style={inStyle({ width: 50, fontFamily: "'JetBrains Mono'", fontSize: 9 })} />
+                        <select value={formSemester} onChange={e => setFormSemester(e.target.value)} data-nodrag style={{ ...selStyle, flex: 1 }}>
+                            <option value="michaelmas">Michaelmas</option><option value="hilary">Hilary</option>
+                            <option value="trinity">Trinity Term</option><option value="yearlong">Year-Long</option>
+                        </select>
+                        <select value={formType} onChange={e => setFormType(e.target.value)} data-nodrag style={{ ...selStyle, flex: 1 }}>
+                            <option value="lecture">Lecture</option><option value="tutorial">Tutorial</option>
+                            <option value="lab">Lab</option><option value="seminar">Seminar</option>
+                        </select>
+                    </div>
+                    <div style={{ display: "flex", gap: 4 }}>
+                        <button onClick={addManual} style={{ flex: 1, padding: "3px", borderRadius: 4, fontSize: 9, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, fontFamily: "'JetBrains Mono'" }}>Add module</button>
+                        <button onClick={() => setAddForm(false)} style={{ padding: "3px 9px", borderRadius: 4, fontSize: 9, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>Cancel</button>
+                    </div>
+                </div>
+            ) : (
+                <button onClick={() => setAddForm(true)} style={{ marginTop: 4, width: "100%", padding: "5px", borderRadius: 6, fontSize: 9, cursor: "pointer", background: "transparent", border: `1px dashed ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>+ Add module manually</button>
+            )}
+        </Panel>
+    );
+}
+
+// ═══════════════════════════════════════════════════
+// TIMETABLE PANEL
+// ═══════════════════════════════════════════════════
+function TimetablePanel({ modules, timetable, onAddSlot, onRemoveSlot, accent, light, onClose, ambient }) {
+    const [addForm, setAddForm] = useState(false);
+    const [formModule, setFormModule] = useState(modules[0]?.code || "");
+    const [formDay, setFormDay] = useState("monday");
+    const [formStart, setFormStart] = useState("09:00");
+    const [formEnd, setFormEnd] = useState("10:00");
+    const [formType, setFormType] = useState("lecture");
+    const [formRoom, setFormRoom] = useState("");
+
+    const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
+    const tx = light ? "#2d3436" : "#fff";
+    const bd = light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.08)";
+    const TYPE_LABELS = { lecture: "L", tutorial: "T", lab: "Lab", seminar: "S" };
+    const moduleColorMap = {};
+    modules.forEach(m => { moduleColorMap[m.code] = m.color || accent; });
+
+    // Compute the range of hours to display (min start → max end, clamped to 08–20)
+    const usedHourNums = timetable.flatMap(s => [parseInt(s.startTime), parseInt(s.endTime || s.startTime)]);
+    const minH = usedHourNums.length ? Math.max(8, Math.min(...usedHourNums)) : 9;
+    const maxH = usedHourNums.length ? Math.min(20, Math.max(...usedHourNums)) : 18;
+    const displayHours = TIMETABLE_HOURS.filter(h => { const n = parseInt(h); return n >= minH && n <= maxH; });
+
+    const getSlots = (day, hour) => timetable.filter(s => s.day === day && s.startTime === hour);
+
+    const addSlot = () => {
+        if (!formModule) return;
+        onAddSlot({ id: `s${Date.now()}`, moduleCode: formModule, day: formDay, startTime: formStart, endTime: formEnd, slotType: formType, room: formRoom });
+        setAddForm(false); setFormRoom("");
+    };
+
+    const selStyle = { background: light ? "rgba(255,255,255,0.8)" : "rgba(30,30,50,0.8)", border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, outline: "none", colorScheme: light ? "light" : "dark" };
+
+    return (
+        <Panel x={24} y={500} width={520} title="Timetable" icon="📆" light={light} onClose={onClose} ambient={ambient} accent={accent}>
+            {timetable.length === 0 && !addForm && <div style={{ fontSize: 11, color: txm, fontStyle: "italic", textAlign: "center", padding: "8px 0 4px" }}>No classes yet — add a slot below</div>}
+            {/* Grid */}
+            {timetable.length > 0 && (
+                <div style={{ overflowX: "auto", marginBottom: 8 }}>
+                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 9, tableLayout: "fixed" }}>
+                        <thead>
+                            <tr>
+                                <th style={{ width: 38, padding: "2px 3px", color: txm, fontWeight: 400, textAlign: "left", fontFamily: "'JetBrains Mono'" }}></th>
+                                {WEEK_DAY_LABELS.map((d, i) => <th key={i} style={{ padding: "2px 3px", color: txm, fontWeight: 500, textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 9 }}>{d}</th>)}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {displayHours.map(hour => (
+                                <tr key={hour}>
+                                    <td style={{ padding: "1px 3px", color: txm, fontFamily: "'JetBrains Mono'", fontSize: 8, verticalAlign: "top", whiteSpace: "nowrap" }}>{hour}</td>
+                                    {WEEK_DAYS.map(day => {
+                                        const slots = getSlots(day, hour);
+                                        return (
+                                            <td key={day} style={{ padding: "1px 2px", verticalAlign: "top", borderLeft: `1px solid ${bd}`, borderTop: `1px solid ${bd}`, minWidth: 72, minHeight: 18 }}>
+                                                {slots.map(s => (
+                                                    <div key={s.id} style={{ background: `${moduleColorMap[s.moduleCode] || accent}22`, border: `1px solid ${moduleColorMap[s.moduleCode] || accent}44`, borderRadius: 3, padding: "1px 3px", marginBottom: 1, display: "flex", gap: 2, alignItems: "center" }}>
+                                                        <span style={{ color: moduleColorMap[s.moduleCode] || accent, fontWeight: 700, fontSize: 8, fontFamily: "'JetBrains Mono'" }}>{s.moduleCode}</span>
+                                                        <span style={{ color: txm, fontSize: 7 }}>{TYPE_LABELS[s.slotType] || s.slotType}</span>
+                                                        {s.room && <span style={{ color: txm, fontSize: 7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{s.room}</span>}
+                                                        <button onClick={() => onRemoveSlot(s.id)} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: txm, fontSize: 9, lineHeight: 1, padding: 0, opacity: 0.4, flexShrink: 0 }}>×</button>
+                                                    </div>
+                                                ))}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+            {/* Add slot */}
+            {addForm ? (
+                <div className="anim-panel" style={{ padding: 8, borderRadius: 8, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)", border: `1px solid ${bd}` }} data-nodrag>
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 4 }}>
+                        <select value={formModule} onChange={e => setFormModule(e.target.value)} data-nodrag style={selStyle}>
+                            {modules.length === 0 ? <option value="">Add modules first</option> : modules.map(m => <option key={m.id} value={m.code}>{m.code} — {m.name.slice(0, 28)}</option>)}
+                        </select>
+                        <select value={formDay} onChange={e => setFormDay(e.target.value)} data-nodrag style={selStyle}>
+                            {WEEK_DAYS.map(d => <option key={d} value={d}>{d.charAt(0).toUpperCase() + d.slice(1)}</option>)}
+                        </select>
+                        <select value={formType} onChange={e => setFormType(e.target.value)} data-nodrag style={selStyle}>
+                            <option value="lecture">Lecture</option><option value="tutorial">Tutorial</option>
+                            <option value="lab">Lab</option><option value="seminar">Seminar</option>
+                        </select>
+                    </div>
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+                        <input type="time" value={formStart} onChange={e => setFormStart(e.target.value)} data-nodrag style={{ width: 82, background: "transparent", border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, fontFamily: "'JetBrains Mono'", outline: "none", colorScheme: light ? "light" : "dark" }} />
+                        <span style={{ color: txm, fontSize: 10 }}>→</span>
+                        <input type="time" value={formEnd} onChange={e => setFormEnd(e.target.value)} data-nodrag style={{ width: 82, background: "transparent", border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, fontFamily: "'JetBrains Mono'", outline: "none", colorScheme: light ? "light" : "dark" }} />
+                        <input value={formRoom} onChange={e => setFormRoom(e.target.value)} placeholder="Room (optional)" data-nodrag style={{ flex: 1, background: "transparent", border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 6px", fontSize: 9, color: tx, outline: "none", minWidth: 70 }} />
+                        <button onClick={addSlot} disabled={!formModule} style={{ padding: "2px 9px", borderRadius: 4, fontSize: 9, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, fontFamily: "'JetBrains Mono'" }}>Add</button>
+                        <button onClick={() => setAddForm(false)} style={{ padding: "2px 7px", borderRadius: 4, fontSize: 9, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>×</button>
+                    </div>
+                </div>
+            ) : (
+                <button onClick={() => { setFormModule(modules[0]?.code || ""); setAddForm(true); }} style={{ marginTop: 2, width: "100%", padding: "5px", borderRadius: 6, fontSize: 9, cursor: "pointer", background: "transparent", border: `1px dashed ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>+ Add class slot</button>
+            )}
+        </Panel>
+    );
+}
+
+// ═══════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════
 export default function App() {
@@ -920,6 +1273,14 @@ export default function App() {
     const [accent, setAccent] = useState("#00cec9");
     const [ambient, setAmbient] = useState({ ...DEFAULT_AMBIENT });
     const [showTasks, setShowTasks] = useState(true), [showCal, setShowCal] = useState(true), [showBudget, setShowBudget] = useState(true), [showRewards, setShowRewards] = useState(true), [showWeather, setShowWeather] = useState(true);
+    const [showTCDModules, setShowTCDModules] = useState(false), [showTimetable, setShowTimetable] = useState(false);
+    // TCD state — persisted to localStorage
+    const [modules, setModules] = useState(() => { try { return JSON.parse(localStorage.getItem("tcd_modules") || "[]"); } catch { return []; } });
+    const [timetable, setTimetable] = useState(() => { try { return JSON.parse(localStorage.getItem("tcd_timetable") || "[]"); } catch { return []; } });
+    const [tcdDegree, setTcdDegree] = useState(() => { try { return JSON.parse(localStorage.getItem("tcd_degree") || "null"); } catch { return null; } });
+    useEffect(() => { localStorage.setItem("tcd_modules", JSON.stringify(modules)); }, [modules]);
+    useEffect(() => { localStorage.setItem("tcd_timetable", JSON.stringify(timetable)); }, [timetable]);
+    useEffect(() => { localStorage.setItem("tcd_degree", JSON.stringify(tcdDegree)); }, [tcdDegree]);
     const [postits, setPostits] = useState([]);
     const [tasks, setTasks] = useState([
         { id: "t1", text: "Finish adaptive apps UI polish 🎨", priority: "high", done: false },
@@ -958,7 +1319,14 @@ export default function App() {
         minimal: { bg: "#f5f0eb", accent: "#2d3436" },
     };
 
-    const snap = () => ({ tasks: tasks.slice(0, 10).map(t => t.text + (t.done ? " ✓" : "")), events: events.slice(0, 5).map(e => `${e.title} ${e.date}`), budget: `${expenses.reduce((s, e) => s + e.amount, 0).toFixed(0)}/${budget}`, mood: ambient.mood });
+    const snap = () => ({
+        tasks: tasks.slice(0, 10).map(t => t.text + (t.done ? " ✓" : "")),
+        events: events.slice(0, 5).map(e => `${e.title} ${e.date}`),
+        budget: `${expenses.reduce((s, e) => s + e.amount, 0).toFixed(0)}/${budget}`,
+        mood: ambient.mood,
+        modules: modules.slice(0, 10).map(m => `${m.code} ${m.name} (${m.semester})`),
+        tcdDegree: tcdDegree ? `${tcdDegree.name}, ${tcdDegree.college}` : null,
+    });
 
     const manualAddTask = (text) => {
         setTasks(p => [...p, { id: gid(), text, priority: "medium", done: false }]);
@@ -1023,6 +1391,11 @@ export default function App() {
                 if (a.mood) { const lm = inferMood(a.mood, []); if (lm) setLennyMood(lm); }
             }
             else if (t === "clear_canvas") { setPostits([]); setTimers([]); setWidgets([]); }
+            else if (t === "add_module" && a.code) setModules(p => p.some(m => m.code === a.code) ? p : [...p, { id: gid(), code: a.code, name: a.name || a.code, credits: Number(a.credits) || 5, semester: a.semester || "michaelmas", moduleType: a.moduleType || "lecture", color: MODULE_COLORS[p.length % MODULE_COLORS.length] }]);
+            else if (t === "remove_module" && a.code) setModules(p => p.filter(m => m.code !== a.code));
+            else if (t === "show_tcd_modules") setShowTCDModules(true);
+            else if (t === "show_timetable") setShowTimetable(true);
+            else if (t === "add_timetable_slot" && a.moduleCode) setTimetable(p => [...p, { id: gid(), moduleCode: a.moduleCode, day: a.day || "monday", startTime: a.startTime || "09:00", endTime: a.endTime || "10:00", slotType: a.slotType || "lecture", room: a.room || "" }]);
         }
     };
 
@@ -1072,7 +1445,15 @@ export default function App() {
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     const txs = light ? "rgba(45,52,54,0.12)" : "rgba(255,255,255,0.1)";
     const pBd = light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)";
-    const togs = [{ k: "t", l: "Tasks", s: showTasks, f: setShowTasks, i: "✓" }, { k: "c", l: "Calendar", s: showCal, f: setShowCal, i: "📅" }, { k: "b", l: "Budget", s: showBudget, f: setShowBudget, i: "💰" }, { k: "r", l: "Rewards", s: showRewards, f: setShowRewards, i: "⭐" }, { k: "w", l: "Weather", s: showWeather, f: setShowWeather, i: "🌤️" }];
+    const togs = [
+        { k: "t", l: "Tasks", s: showTasks, f: setShowTasks, i: "✓" },
+        { k: "c", l: "Calendar", s: showCal, f: setShowCal, i: "📅" },
+        { k: "b", l: "Budget", s: showBudget, f: setShowBudget, i: "💰" },
+        { k: "r", l: "Rewards", s: showRewards, f: setShowRewards, i: "⭐" },
+        { k: "w", l: "Weather", s: showWeather, f: setShowWeather, i: "🌤️" },
+        { k: "m", l: "Modules", s: showTCDModules, f: setShowTCDModules, i: "🎓" },
+        { k: "tt", l: "Timetable", s: showTimetable, f: setShowTimetable, i: "📆" },
+    ];
 
     const activeTasks = tasks.filter(t => !t.done && !t.isParent).length;
     const completedTasks = tasks.filter(t => t.done).length;
@@ -1084,12 +1465,14 @@ export default function App() {
     const weeklyGoalProgress = Math.min(completedTasks, weeklyGoalTarget);
     const weeklyGoalMet = weeklyGoalProgress >= weeklyGoalTarget;
     const weeklyGoalHelper = weeklyGoalMet ? "Reward unlocked" : weeklyGoalTarget - weeklyGoalProgress === 1 ? "1 task left" : `${weeklyGoalTarget - weeklyGoalProgress} tasks left`;
+    const totalModuleCredits = modules.reduce((s, m) => s + (m.credits || 5), 0);
     const statCards = [
         { label: "Active tasks", value: activeTasks, helper: activeTasks <= 2 ? "On track" : "Busy week" },
         { label: "Upcoming events", value: upcomingEvents, helper: upcomingEvents > 0 ? "Plan ahead" : "Clear calendar" },
         { label: "Budget used", value: `${budgetProgress}%`, helper: budgetProgress >= 70 ? "Watch spend" : "On track" },
         { label: "Study streak", value: `${studyStreak}d`, helper: studyStreak >= 5 ? "Building rhythm" : "Momentum" },
         { label: "Weekly goal", value: `${weeklyGoalProgress}/${weeklyGoalTarget}`, helper: weeklyGoalHelper },
+        { label: "Modules", value: modules.length > 0 ? `${modules.length}` : "—", helper: modules.length > 0 ? `${totalModuleCredits} ECTS` : "Add via 🎓" },
     ];
     const quickThemes = [
         { key: "focus", label: "Deep focus" },
@@ -1222,12 +1605,14 @@ export default function App() {
                 {showBudget && <BudgetPanel expenses={expenses} budget={budget} accent={accent} light={light} onClose={() => setShowBudget(false)} onDeleteExpense={id => setExpenses(e => e.filter(ex => ex.id !== id))} onAddExpense={manualAddExpense} ambient={ambient} />}
                 {showRewards && <RewardsPanel completedTasks={completedTasks} weeklyGoalTarget={weeklyGoalTarget} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" />}
                 {showWeather && <WeatherWidget light={light} accent={accent} ambient={ambient} onClose={() => setShowWeather(false)} />}
+                {showTCDModules && <TCDModulesPanel modules={modules} tcdDegree={tcdDegree} onSetDegree={setTcdDegree} onAddModule={m => setModules(p => p.some(x => x.code === m.code) ? p : [...p, m])} onRemoveModule={id => setModules(p => p.filter(m => m.id !== id))} accent={accent} light={light} onClose={() => setShowTCDModules(false)} ambient={ambient} />}
+                {showTimetable && <TimetablePanel modules={modules} timetable={timetable} onAddSlot={s => setTimetable(p => [...p, s])} onRemoveSlot={id => setTimetable(p => p.filter(s => s.id !== id))} accent={accent} light={light} onClose={() => setShowTimetable(false)} ambient={ambient} />}
 
                 {postits.map(p => <PostIt key={p.id} id={p.id} content={p.content} color={p.color} initialX={p.x} initialY={p.y} onRemove={id => setPostits(pp => pp.filter(n => n.id !== id))} onEdit={(id, v) => setPostits(pp => pp.map(n => n.id === id ? { ...n, content: v } : n))} />)}
                 {timers.map(t => <TimerWidget key={t.id} id={t.id} minutes={t.minutes} label={t.label} onRemove={id => setTimers(tt => tt.filter(n => n.id !== id))} light={light} />)}
                 {widgets.map(w => w.type === "clock" ? <ClockWidget key={w.id} id={w.id} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} light={light} /> : w.type === "quote" ? <QuoteWidget key={w.id} id={w.id} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} light={light} /> : null)}
 
-                {!postits.length && !timers.length && !widgets.length && !showTasks && !showCal && !showBudget && !showRewards && !showWeather && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", color: txs, userSelect: "none", zIndex: 5 }}>
+                {!postits.length && !timers.length && !widgets.length && !showTasks && !showCal && !showBudget && !showRewards && !showWeather && !showTCDModules && !showTimetable && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", color: txs, userSelect: "none", zIndex: 5 }}>
                     <div style={{ fontSize: 40, marginBottom: 8 }}>✦</div><div style={{ fontFamily: "'JetBrains Mono'", fontSize: 10, letterSpacing: 2 }}>YOUR STUDENT DASHBOARD IS CLEAR</div><div style={{ marginTop: 8, fontSize: 11, color: txm }}>Turn panels back on or ask the copilot to add something.</div>
                 </div>}
                 </HeaderLockCtx.Provider>
@@ -1254,7 +1639,7 @@ export default function App() {
                 </div>
                 <div style={{ padding: "8px 10px 10px" }}>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "0 2px 8px" }}>
-                        {["split my assignment into subtasks", "log €8 lunch", "add study timer", "make it cozy"].map((prompt) => (
+                        {["show my modules", "add module CS3012", "log €8 lunch", "add study timer", "make it cozy"].map((prompt) => (
                             <button key={prompt} onClick={() => send(prompt)} disabled={loading} style={{ padding: "5px 8px", borderRadius: 999, border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.07)"}`, background: light ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.035)", color: txm, fontSize: 9, fontFamily: "'JetBrains Mono'", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}>
                                 {prompt}
                             </button>

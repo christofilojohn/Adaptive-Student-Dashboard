@@ -52,11 +52,11 @@ ARG BUILD_TYPE=cuda
 ENV BUILD_TYPE=${BUILD_TYPE}
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Runtime libs
-RUN apt-get update && apt-get install -y \
-    libcurl4 libgomp1 curl wget \
-    nginx supervisor \
-    && rm -rf /var/lib/apt/lists/*
+# Runtime libs + Node.js 20 (for the on-device search server)
+RUN apt-get update && apt-get install -y ca-certificates gnupg curl wget && \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y libcurl4 libgomp1 nodejs nginx supervisor && \
+    rm -rf /var/lib/apt/lists/*
 
 # CUDA runtime libs (only needed for cuda builds)
 RUN if [ "$BUILD_TYPE" = "cuda" ]; then \
@@ -85,6 +85,9 @@ RUN chmod +x /usr/local/bin/llama-server
 # Copy built frontend
 COPY --from=frontend-builder /app/dist /var/www/dashboard
 
+# Copy on-device search server
+COPY backend/search-server.mjs /app/search-server.mjs
+
 # Nginx config to serve frontend + proxy LLM API
 RUN cat > /etc/nginx/sites-enabled/default << 'EOF'
 server {
@@ -99,6 +102,12 @@ proxy_pass http://127.0.0.1:8080;
 proxy_set_header Host $host;
 proxy_read_timeout 300s;
 proxy_buffering off;
+}
+
+location /search {
+proxy_pass http://127.0.0.1:8082;
+proxy_set_header Host $host;
+proxy_read_timeout 30s;
 }
 
 location /health {
