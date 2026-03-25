@@ -168,9 +168,7 @@ async function callLLM(msg, state) {
     try {
         const raw = await fetchLLM(full, msg, chatCtrl.signal, 500);
         chatCtrl = null;
-        console.log("[LLM raw]", raw);
         const parsed = parseResponse(raw);
-        console.log("[LLM parsed]", parsed);
         if (parsed) return { actions: parsed.actions, reply: parsed.reply || "Done! ✨" };
         return { actions: [], reply: "Done! ✨" };
     } catch (e) {
@@ -643,7 +641,7 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     const catI = { food: "🍽️", transport: "🚗", entertainment: "🎬", shopping: "🛍️", bills: "📄", health: "💊", other: "📦" };
     const catC = { food: "#e17055", transport: "#0984e3", entertainment: "#6c5ce7", shopping: "#fdcb6e", bills: "#636e72", health: "#00b894", other: "#b2bec3" };
     const catT = {}; expenses.forEach(e => { catT[e.category] = (catT[e.category] || 0) + e.amount; });
-    const submit = () => { if (!desc.trim() || !amt) return; onAddExpense(desc.trim(), parseFloat(amt), cat); setDesc(""); setAmt(""); setShowForm(false); };
+    const submit = () => { if (!desc.trim() || !amt || parseFloat(amt) <= 0) return; onAddExpense(desc.trim(), parseFloat(amt), cat); setDesc(""); setAmt(""); setShowForm(false); };
 
     return (
         <Panel x={370} y={320} width={250} title="Budget" icon="💰" light={light} onClose={onClose} ambient={ambient} accent={accent}>
@@ -961,7 +959,8 @@ export default function App() {
     const snap = () => ({ tasks: tasks.slice(0, 10).map(t => t.text + (t.done ? " ✓" : "")), events: events.slice(0, 5).map(e => `${e.title} ${e.date}`), budget: `${expenses.reduce((s, e) => s + e.amount, 0).toFixed(0)}/${budget}`, mood: ambient.mood });
 
     const manualAddTask = (text) => {
-        setTasks(p => [...p, { id: gid(), text, priority: "medium", done: false }]);
+        if (!text.trim()) return;
+        setTasks(p => [...p, { id: gid(), text: text.trim(), priority: "medium", done: false }]);
         const inferred = inferMood(text, [{ type: "add_task" }]);
         if (inferred) setLennyMood(inferred);
         callAmbientLLM(`User added task: "${text}". Emotional weight?`).then(r => {
@@ -1003,7 +1002,7 @@ export default function App() {
                     return result;
                 });
             }
-            else if (t === "add_timer") setTimers(p => [...p, { id: gid(), minutes: Number(a.minutes) || 5, label: a.label || "Timer" }]);
+            else if (t === "add_timer") { const mins = Number(a.minutes); if (mins > 0) setTimers(p => [...p, { id: gid(), minutes: mins, label: a.label || "Timer" }]); else console.warn("[exec] add_timer skipped: invalid minutes:", a.minutes); }
             else if (t === "change_theme" && themes[a.theme]) { setBg(themes[a.theme].bg); setAccent(themes[a.theme].accent); }
             else if (t === "set_greeting" && a.text) setGreeting(a.text);
             else if (t === "add_widget" && a.widgetType) setWidgets(p => [...p, { id: gid(), type: a.widgetType }]);
@@ -1023,6 +1022,7 @@ export default function App() {
                 if (a.mood) { const lm = inferMood(a.mood, []); if (lm) setLennyMood(lm); }
             }
             else if (t === "clear_canvas") { setPostits([]); setTimers([]); setWidgets([]); }
+            else { console.warn("[exec] Unknown action type:", t, a); }
         }
     };
 
