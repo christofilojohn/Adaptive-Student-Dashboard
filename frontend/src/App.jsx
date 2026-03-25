@@ -90,6 +90,7 @@ ACTIONS you can use:
 {"type":"delete_task","text":"milk"}
 {"type":"split_task","text":"report","subtasks":["Research 🔍","Write draft ✍️","Edit 📝"]}
 {"type":"add_postit","content":"Remember this","color":"#fef68a","x":200,"y":100}
+{"type":"add_note","content":"Remember this","color":"#fef68a"}
 {"type":"add_event","title":"Meeting 📞","date":"2026-02-16","time":"14:00","duration":60,"color":"#6c5ce7"}
 {"type":"delete_event","title":"meeting"}
 {"type":"add_expense","description":"Coffee ☕","amount":4.50,"category":"food"}
@@ -459,7 +460,7 @@ function PostIt({ id, content, color, initialX, initialY, onRemove, onEdit }) {
             <style>{`@keyframes noteIn_${id}{from{opacity:0;transform:rotate(${rot.current}deg) scale(0.7)}to{opacity:1;transform:rotate(${rot.current}deg) scale(1)}}`}</style>
             <button onClick={e => { e.stopPropagation(); onRemove(id); }} style={{ position: "absolute", top: 3, right: 6, background: "none", border: "none", color: "rgba(0,0,0,0.2)", cursor: "pointer", fontSize: 15, lineHeight: 1 }}>×</button>
             {em && <span style={{ position: "absolute", top: 4, left: 8, fontSize: 13 }}>{em}</span>}
-            <EditableText value={content} onChange={v => onEdit(id, v)} maxLen={POSTIT_CHAR_LIMIT} multiline style={{ fontFamily: "'Caveat', cursive", fontSize: 16, color: "#2d3436", lineHeight: 1.4 }} />
+            <EditableText value={content} onChange={v => onEdit(id, v)} maxLen={POSTIT_CHAR_LIMIT} multiline style={{ fontFamily: "'Caveat', cursive", fontSize: 16, color: "#111111", lineHeight: 1.4 }} />
         </div>
     );
 }
@@ -730,6 +731,8 @@ function RewardsPanel({ completedTasks, weeklyGoalTarget, weeklyStreak, accent, 
     );
 }
 
+
+
 function TypingDots() { return <div style={{ display: "flex", gap: 3, padding: "8px 12px", alignSelf: "flex-start" }}>{[0, 1, 2].map(i => <div key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.3)", animation: `bk 1.2s ${i * .15}s infinite ease-in-out` }} />)}</div>; }
 
 // ═══════════════════════════════════════════════════
@@ -742,6 +745,8 @@ export default function App() {
     const [ambient, setAmbient] = useState({ ...DEFAULT_AMBIENT });
     const [showTasks, setShowTasks] = useState(true), [showCal, setShowCal] = useState(true), [showBudget, setShowBudget] = useState(true), [showRewards, setShowRewards] = useState(true);
     const [postits, setPostits] = useState([]);
+    const [showPostitLibrary, setShowPostitLibrary] = useState(false);
+    const [selectedPostitId, setSelectedPostitId] = useState(null);
     const [tasks, setTasks] = useState([
         { id: "t1", text: "Finish adaptive apps UI polish 🎨", priority: "high", done: false },
         { id: "t2", text: "Review CS deadline list 📚", priority: "medium", done: false },
@@ -761,6 +766,10 @@ export default function App() {
     const scrollRef = useRef(null), inputRef = useRef(null), idRef = useRef(300), ambientTimerRef = useRef(null);
     const gid = () => `i${idRef.current++}`;
     useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, loading]);
+    useEffect(() => {
+        if (showPostitLibrary && !selectedPostitId && postits.length) setSelectedPostitId(postits[0].id);
+        if (!postits.length && selectedPostitId) setSelectedPostitId(null);
+    }, [showPostitLibrary, postits, selectedPostitId]);
 
     const themes = {
         cozy: { bg: "linear-gradient(135deg, #2d1b14 0%, #1a1410 50%, #0d0a07 100%)", accent: "#e17055" },
@@ -771,7 +780,7 @@ export default function App() {
         minimal: { bg: "#f5f0eb", accent: "#2d3436" },
     };
 
-    const snap = () => ({ tasks: tasks.slice(0, 10).map(t => t.text + (t.done ? " ✓" : "")), events: events.slice(0, 5).map(e => `${e.title} ${e.date}`), budget: `${expenses.reduce((s, e) => s + e.amount, 0).toFixed(0)}/${budget}`, mood: ambient.mood });
+    const snap = () => ({ tasks: tasks.slice(0, 10).map(t => t.text + (t.done ? " ✓" : "")), events: events.slice(0, 5).map(e => `${e.title} ${e.date}`), notes: postits.slice(0, 6).map(n => n.content), budget: `${expenses.reduce((s, e) => s + e.amount, 0).toFixed(0)}/${budget}`, mood: ambient.mood });
 
     const manualAddTask = (text) => {
         setTasks(p => [...p, { id: gid(), text, priority: "medium", done: false }]);
@@ -794,13 +803,19 @@ export default function App() {
     const manualAddExpense = (desc, amount, category) => {
         setExpenses(p => [...p, { id: gid(), description: desc, amount, category }]);
     };
+    const manualAddNote = (content) => {
+        const palette = ["#fef68a", "#ffd6a5", "#caffbf", "#bde0fe", "#e9d5ff"];
+        setPostits(p => [...p, { id: gid(), content, color: palette[p.length % palette.length], x: 90 + Math.random() * 260, y: 120 + Math.random() * 180 }]);
+        const inferred = inferMood(content, []);
+        if (inferred) setLennyMood(inferred);
+    };
 
     const exec = (actions) => {
         if (!Array.isArray(actions)) return;
         for (const a of actions) {
             const t = a.type;
             if (t === "change_bg" && a.color) setBg(a.color);
-            else if (t === "add_postit") setPostits(p => [...p, { id: gid(), content: a.content || "Note", color: a.color || "#fef68a", x: Number(a.x) || 80 + Math.random() * 300, y: Number(a.y) || 40 + Math.random() * 200 }]);
+            else if (t === "add_postit") setPostits(p => [...p, { id: gid(), content: a.content || "Note", color: a.color || "#fef68a", x: Number(a.x) || 80 + Math.random() * 900, y: Number(a.y) || 40 + Math.random() * 800 }]);
             else if (t === "add_task") setTasks(p => [...p, { id: gid(), text: a.text || "New task", priority: a.priority || "medium", done: false }]);
             else if (t === "complete_task" && a.text) setTasks(p => p.map(tk => !tk.done && !tk.isParent && String(tk.text).toLowerCase().includes(String(a.text).toLowerCase()) ? { ...tk, done: true } : tk));
             else if (t === "delete_task" && a.text) setTasks(p => p.filter(tk => !String(tk.text).toLowerCase().includes(String(a.text).toLowerCase())));
@@ -823,7 +838,27 @@ export default function App() {
             else if (t === "add_event") setEvents(p => [...p, { id: gid(), title: a.title || "Event", date: a.date || new Date().toISOString().split("T")[0], time: a.time || "09:00", duration: Number(a.duration) || 60, color: a.color || "#6c5ce7" }]);
             else if (t === "delete_event" && a.title) setEvents(p => p.filter(e => !String(e.title).toLowerCase().includes(String(a.title).toLowerCase())));
             else if (t === "add_expense") setExpenses(p => [...p, { id: gid(), description: a.description || "Expense", amount: Number(a.amount) || 0, category: a.category || "other" }]);
-            else if (t === "set_budget") setBudgetVal(Number(a.amount) || 0);
+            /* else if (t === "add_note") setPostits(p => [
+                ...p,
+                {
+                    id: gid(),
+                    content: a.content || "Quick note",
+                    color: a.color || "#fef68a",
+                    x: 1085 + (p.length % 4) * 26,
+                    y: 245 + (p.length % 4) * 22
+                }
+            ]); */
+            else if (t === "add_note") setPostits(p => [
+                ...p,
+                {
+                    id: gid(),
+                    content: a.content || "Quick note",
+                    color: a.color || "#fef68a",
+                    x: 1085 + (p.length % 4) * 26,
+                    y: 245 + (p.length % 4) * 22
+                }
+            ]);
+                            else if (t === "set_budget") setBudgetVal(Number(a.amount) || 0);
             else if (t === "adjust_ambient") {
                 setAmbient(prev => ({
                     ...prev, glowColor: a.glowColor || prev.glowColor,
@@ -835,7 +870,7 @@ export default function App() {
                 // Also try to sync lenny from LLM mood if it maps to something
                 if (a.mood) { const lm = inferMood(a.mood, []); if (lm) setLennyMood(lm); }
             }
-            else if (t === "clear_canvas") { setPostits([]); setTimers([]); setWidgets([]); }
+            else if (t === "clear_canvas") { setPostits([]); setTimers([]); setWidgets([]); setSelectedPostitId(null); }
         }
     };
 
@@ -927,6 +962,26 @@ export default function App() {
 
     const adaptiveStatus = adaptiveStatusMap[ambient.mood] || "Planning mode active";
 
+    const noteColors = ["#fef68a", "#ffd6a5", "#caffbf", "#bde0fe", "#e9d5ff"];
+    const selectedPostit = postits.find(p => p.id === selectedPostitId) || null;
+    const createPostit = () => {
+        const next = {
+            id: gid(),
+            content: "New sticky note",
+            color: noteColors[postits.length % noteColors.length],
+            x: 1025 + (postits.length % 4) * 26,
+            y: 245 + (postits.length % 4) * 22
+        };
+        setPostits(p => [...p, next]);
+        setShowPostitLibrary(true);
+        setSelectedPostitId(next.id);
+    };
+    const updatePostit = (id, updates) => setPostits(pp => pp.map(n => n.id === id ? { ...n, ...updates } : n));
+    const deletePostit = (id) => {
+        setPostits(pp => pp.filter(n => n.id !== id));
+        setSelectedPostitId(cur => cur === id ? null : cur);
+    };
+
     return <>
         <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,700;1,400&family=JetBrains+Mono:wght@200;400;600;700&display=swap" rel="stylesheet" />
         <style>{`
@@ -956,13 +1011,13 @@ export default function App() {
 
                 {/* Header */}
                 <div style={{ position: "relative", zIndex: 50, padding: "14px 24px 8px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}>
-                    <div style={{ maxWidth: 560 }}>
+                    <div style={{ maxWidth: 900 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
                             <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, color: txm, letterSpacing: 1.7, textTransform: "uppercase" }}>Adaptive Dashboard</span>
                             <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, letterSpacing: 1, padding: "2px 7px", borderRadius: 999, background: "rgba(0,184,148,0.15)", color: "#00b894", border: "1px solid rgba(0,184,148,0.25)" }}>LOCAL</span>
                         </div>
                         <h1 style={{ fontFamily: "'DM Sans'", fontWeight: 300, fontSize: 24, margin: 0, letterSpacing: -0.5, color: light ? "rgba(45,52,54,0.92)" : "rgba(255,255,255,0.92)" }}>{greeting}</h1>
-                        <div style={{ fontSize: 11.5, lineHeight: 1.45, marginTop: 5, color: light ? "rgba(45,52,54,0.62)" : "rgba(255,255,255,0.58)", maxWidth: 500 }}>
+                        <div style={{ fontSize: 11.5, lineHeight: 1.45, marginTop: 5, color: light ? "rgba(45,52,54,0.62)" : "rgba(255,255,255,0.58)", maxWidth: 900 }}>
                             A calmer dashboard for modules, money, and weekly goals — with styling that reacts to how your week feels.
                         </div>
                         <div style={{ marginTop: 10 }}>
@@ -997,6 +1052,7 @@ export default function App() {
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
                         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                            <button onClick={() => setShowPostitLibrary(true)} style={{ padding: "5px 10px", borderRadius: 999, fontSize: 9.5, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: showPostitLibrary ? `${accent}24` : (light ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)"), border: `1px solid ${showPostitLibrary ? `${accent}50` : pBd}`, color: showPostitLibrary ? accent : txm, display: "flex", alignItems: "center", gap: 4, transition: "all 0.2s" }}><span style={{ fontSize: 10 }}>📝</span> Post-its</button>
                             {togs.map(t => <button key={t.k} onClick={() => t.f(v => !v)} style={{ padding: "5px 10px", borderRadius: 999, fontSize: 9.5, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: t.s ? `${accent}20` : (light ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)"), border: `1px solid ${t.s ? `${accent}40` : pBd}`, color: t.s ? accent : txm, display: "flex", alignItems: "center", gap: 4, transition: "all 0.2s" }}><span style={{ fontSize: 10 }}>{t.i}</span> {t.l}</button>)}
                         </div>
                         <div style={{ display: "flex", gap: 5, flexWrap: "wrap", justifyContent: "flex-end", maxWidth: 260 }}>
@@ -1033,6 +1089,56 @@ export default function App() {
                 {showCal && <CalendarPanel events={events} onDeleteEvent={id => setEvents(e => e.filter(ev => ev.id !== id))} onAddEvent={manualAddEvent} accent={accent} light={light} onClose={() => setShowCal(false)} ambient={ambient} />}
                 {showBudget && <BudgetPanel expenses={expenses} budget={budget} accent={accent} light={light} onClose={() => setShowBudget(false)} onDeleteExpense={id => setExpenses(e => e.filter(ex => ex.id !== id))} onAddExpense={manualAddExpense} ambient={ambient} />}
                 {showRewards && <RewardsPanel completedTasks={completedTasks} weeklyGoalTarget={weeklyGoalTarget} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" />}
+
+                {showPostitLibrary && <div style={{ position: "absolute", inset: 0, zIndex: 120, background: light ? "rgba(245,240,235,0.62)" : "rgba(8,10,18,0.58)", backdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+                    <div className="anim-panel" style={{ width: "min(940px, 92vw)", height: "min(620px, 84vh)", display: "grid", gridTemplateColumns: "320px 1fr", background: light ? "rgba(255,255,255,0.78)" : "rgba(10,12,22,0.82)", border: `1px solid ${pBd}`, borderRadius: 22, overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,0.28)" }}>
+                        <div style={{ borderRight: `1px solid ${pBd}`, padding: 18, display: "flex", flexDirection: "column", minHeight: 0 }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 }}>
+                                <div>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 1.6, textTransform: "uppercase", color: txm }}>Sticky notes</div>
+                                    <div style={{ fontSize: 18, fontWeight: 700, color: tx, marginTop: 4 }}>Notes library</div>
+                                </div>
+                                <div style={{ display: "flex", gap: 6 }}>
+                                    <button onClick={createPostit} style={{ width: 32, height: 32, borderRadius: 10, border: `1px solid ${accent}44`, background: `${accent}18`, color: accent, cursor: "pointer", fontSize: 18, lineHeight: 1 }}>+</button>
+                                    <button onClick={() => setShowPostitLibrary(false)} style={{ width: 32, height: 32, borderRadius: 10, border: `1px solid ${pBd}`, background: "transparent", color: txm, cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>
+                                </div>
+                            </div>
+                            <div style={{ display: "grid", gap: 10, overflowY: "auto", paddingRight: 4 }}>
+                                {postits.length === 0 && <div style={{ padding: 16, borderRadius: 14, border: `1px dashed ${pBd}`, color: txm, fontSize: 11 }}>No sticky notes yet. Click + to create one.</div>}
+                                {postits.map((note, idx) => {
+                                    const active = note.id === selectedPostitId;
+                                    const noteColor = note.color || noteColors[idx % noteColors.length];
+                                    return <button key={note.id} onClick={() => setSelectedPostitId(note.id)} style={{ textAlign: "left", border: `1px solid ${active ? `${accent}55` : pBd}`, background: active ? (light ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.06)") : (light ? "rgba(255,255,255,0.68)" : "rgba(255,255,255,0.03)"), borderRadius: 16, padding: 12, cursor: "pointer", boxShadow: active ? `0 0 0 1px ${accent}18` : "none" }}>
+                                        <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                                            <div style={{ width: 12, height: 12, borderRadius: 999, background: noteColor, boxShadow: `0 0 0 3px ${noteColor}22`, marginTop: 2, flexShrink: 0 }} />
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{ fontSize: 11, color: tx, lineHeight: 1.45, fontWeight: active ? 600 : 500 }}>{note.content || "Untitled note"}</div>
+                                            </div>
+                                        </div>
+                                    </button>;
+                                })}
+                            </div>
+                        </div>
+                        <div style={{ padding: 22, display: "flex", flexDirection: "column", minHeight: 0 }}>
+                            {selectedPostit ? <>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+                                    <div>
+                                        <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 1.6, textTransform: "uppercase", color: txm }}>Editor</div>
+                                        <div style={{ fontSize: 18, fontWeight: 700, color: tx, marginTop: 4 }}>Open sticky note</div>
+                                    </div>
+                                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                        {noteColors.map(c => <button key={c} onClick={() => updatePostit(selectedPostit.id, { color: c })} style={{ width: 20, height: 20, borderRadius: 999, border: `2px solid ${(selectedPostit.color || c) === c ? tx : 'transparent'}`, background: c, cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.12)" }} />)}
+                                        <button onClick={() => deletePostit(selectedPostit.id)} style={{ padding: "6px 10px", borderRadius: 10, border: `1px solid ${pBd}`, background: "transparent", color: txm, cursor: "pointer", fontFamily: "'JetBrains Mono'", fontSize: 10 }}>Delete</button>
+                                    </div>
+                                </div>
+                                <div style={{ flex: 1, borderRadius: 24, background: selectedPostit.color || "#fef68a", padding: 22, boxShadow: "0 18px 50px rgba(0,0,0,0.18)", display: "flex", flexDirection: "column" }}>
+                                    <div style={{ fontSize: 12, color: "rgba(45,52,54,0.55)", fontFamily: "'JetBrains Mono'", letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 12 }}>Sticky note</div>
+                                    <EditableText value={selectedPostit.content} onChange={v => updatePostit(selectedPostit.id, { content: v })} maxLen={POSTIT_CHAR_LIMIT} multiline style={{ fontFamily: "'Caveat', cursive", fontSize: 28, lineHeight: 1.25, color: "#111111", flex: 1 }} />
+                                </div>
+                            </> : <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: txm, fontSize: 12 }}>Select a sticky note or click + to create one.</div>}
+                        </div>
+                    </div>
+                </div>}
 
                 {postits.map(p => <PostIt key={p.id} id={p.id} content={p.content} color={p.color} initialX={p.x} initialY={p.y} onRemove={id => setPostits(pp => pp.filter(n => n.id !== id))} onEdit={(id, v) => setPostits(pp => pp.map(n => n.id === id ? { ...n, content: v } : n))} />)}
                 {timers.map(t => <TimerWidget key={t.id} id={t.id} minutes={t.minutes} label={t.label} onRemove={id => setTimers(tt => tt.filter(n => n.id !== id))} light={light} />)}
