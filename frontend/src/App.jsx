@@ -4,20 +4,15 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 // CONFIG
 // ═══════════════════════════════════════════════════
 const LLM_CONFIG = {
-    mode: "gemini",
-    proxy_url: "/api/llm",
+    mode: "local",
+    local_url: "/v1/chat/completions",
+    local_model: "phi-3.5-mini-instruct",
 };
 const POSTIT_CHAR_LIMIT = 120;
 const TASK_CHAR_LIMIT = 80;
 
-// Passphrase hashing utility
-async function sha256(text) {
-    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
-}
-
 // ═══════════════════════════════════════════════════
-//  Hardcoded EMOJI GUESSER
+// SMART EMOJI GUESSER
 // ═══════════════════════════════════════════════════
 const HAS_EMOJI = /[\p{Emoji_Presentation}\p{Extended_Pictographic}]/u;
 const EMOJI_MAP = [
@@ -131,7 +126,7 @@ User: Trip to Ireland next week
 
 RULES:
 - Extract ACTUAL content. Analyze the deep context (e.g., countries, brands, emotional tone, specific activities) and ALWAYS append ONE fitting, standard Unicode emoji to the end of the text/title.
-- CRITICAL EMOJI RULE: Use STRICTLY valid standard Unicode emojis. NEVER mix regional indicator letters with text (e.g., correctly output "Visit Ireland 🇮🇪", NEVER output "Visit Ireland 🇮reland").
+- CRITICAL EMOJI RULE: Use STRICTLY valid standard Unicode emojis. NEVER mix regional indicator letters with text (e.g., correctly output "Visit Ireland 🇮🇪", NEVER output "Visit Ireland 🇮reland"). 
 - Recognize synonyms for completion: "done", "complete", "finish", "check off" all map to "complete_task".
 - Use DATE REFERENCE below to resolve dates accurately.
 - Keep reply under 20 words
@@ -155,16 +150,15 @@ function parseResponse(raw) {
     return null;
 }
 
-let passphraseHash = null; // Set by passphrase gate
-
 async function fetchLLM(systemPrompt, userMsg, signal, maxTok = 500) {
-    const r = await fetch(LLM_CONFIG.proxy_url, {
-        method: "POST", signal, headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ passphraseHash, systemPrompt, userMsg, maxTokens: maxTok })
-    });
-    const data = await r.json();
-    if (data.error) throw new Error(data.error);
-    return data.content || "{}";
+    if (LLM_CONFIG.mode === "local") {
+        const r = await fetch(LLM_CONFIG.local_url, {
+            method: "POST", signal, headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: LLM_CONFIG.local_model, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMsg }], temperature: 0.3, max_tokens: maxTok, response_format: { type: "json_object" } })
+        });
+        if (!r.ok) throw new Error(`LLM server error: ${r.status} ${r.statusText}`);
+        return (await r.json()).choices?.[0]?.message?.content || "{}";
+    }
 }
 
 async function callLLM(msg, state) {
@@ -177,17 +171,12 @@ async function callLLM(msg, state) {
         console.log("[LLM raw]", raw);
         const parsed = parseResponse(raw);
         console.log("[LLM parsed]", parsed);
-        if (parsed && (parsed.actions.length > 0 || parsed.reply)) {
-            return { actions: parsed.actions, reply: parsed.reply || "Done! ✨" };
-        }
-        // If we got raw text but couldn't parse actions, show what came back
-        console.warn("[LLM] No actions/reply parsed from:", raw);
+        if (parsed) return { actions: parsed.actions, reply: parsed.reply || "Done! ✨" };
         return { actions: [], reply: "Done! ✨" };
     } catch (e) {
         chatCtrl = null;
-        console.error("[LLM error]", e);
         if (e?.name === "AbortError") return { actions: [], reply: "" };
-        return { actions: [], reply: `Error: ${e.message}` };
+        return { actions: [], reply: "Couldn't process that — try rephrasing?" };
     }
 }
 
@@ -323,7 +312,7 @@ const MOOD_RULES = [
     { mood: "intense",    pattern: /\b(intense|serious|critical|important|power|determined|no excuses|push)\b/i },
     { mood: "mysterious",  pattern: /\b(mysteri|dark|midnight|shadow|secret|enigma|noir|spooky)\b/i },
     { mood: "ocean",      pattern: /\b(ocean|sea|water|wave|beach|surf|coast|marine|island)\b/i },
-    { mood: "nature",     pattern: /\b(forest|nature|green|earth|garden|tree|plant|hike|mountain|outdoor|quest)\b/i },
+    { mood: "nature",     pattern: /\b(forest|nature|green|earth|garden|tree|plant|hike|mountain|outdoor)\b/i },
     { mood: "sunset",     pattern: /\b(sunset|sunrise|golden|dusk|twilight|dawn|horizon|sky)\b/i },
     { mood: "dreamy",     pattern: /\b(dream|whimsical|fantasy|magic|wonder|fairy|starry|wish)\b/i },
     { mood: "calm",       pattern: /\b(calm|serene|peaceful|tranquil|zen|meditat|mindful|breathe|quiet)\b/i },
@@ -744,84 +733,9 @@ function RewardsPanel({ completedTasks, weeklyGoalTarget, weeklyStreak, accent, 
 function TypingDots() { return <div style={{ display: "flex", gap: 3, padding: "8px 12px", alignSelf: "flex-start" }}>{[0, 1, 2].map(i => <div key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.3)", animation: `bk 1.2s ${i * .15}s infinite ease-in-out` }} />)}</div>; }
 
 // ═══════════════════════════════════════════════════
-// PASSPHRASE GATE
-// ═══════════════════════════════════════════════════
-function PassphraseGate({ onUnlock }) {
-    const [phrase, setPhrase] = useState("");
-    const [error, setError] = useState("");
-    const [checking, setChecking] = useState(false);
-
-    const submit = async () => {
-        if (!phrase.trim()) return;
-        setChecking(true);
-        setError("");
-        const hash = await sha256(phrase.trim());
-        try {
-            const r = await fetch(LLM_CONFIG.proxy_url, {
-                method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ passphraseHash: hash, systemPrompt: "Reply with {}", userMsg: "test", maxTokens: 10 })
-            });
-            const data = await r.json();
-            // 403 = wrong passphrase, anything else means passphrase was accepted
-            if (r.status === 403) { setError("Wrong passphrase"); setChecking(false); return; }
-            passphraseHash = hash;
-            onUnlock();
-        } catch {
-            setError("Connection failed");
-        }
-        setChecking(false);
-    };
-
-    return (
-        <div style={{
-            width: "100vw", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
-            background: "linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)",
-            fontFamily: "'DM Sans', sans-serif",
-        }}>
-            <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;700&family=JetBrains+Mono:wght@200;400;600&display=swap" rel="stylesheet" />
-            <div style={{
-                background: "rgba(255,255,255,0.03)", backdropFilter: "blur(20px)",
-                border: "1px solid rgba(255,255,255,0.06)", borderRadius: 18,
-                padding: "40px 36px", width: 340, textAlign: "center",
-            }}>
-                <div style={{ fontSize: 32, marginBottom: 8 }}>✦</div>
-                <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 3, textTransform: "uppercase", color: "rgba(255,255,255,0.4)", marginBottom: 24 }}>
-                    Adaptive Dashboard
-                </div>
-                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", marginBottom: 16 }}>
-                    Enter passphrase to continue
-                </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                    <input
-                        type="password" value={phrase} onChange={e => setPhrase(e.target.value)}
-                        onKeyDown={e => e.key === "Enter" && submit()}
-                        placeholder="Passphrase..."
-                        autoFocus
-                        style={{
-                            flex: 1, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
-                            borderRadius: 8, padding: "8px 12px", fontSize: 13, color: "#fff", outline: "none",
-                            fontFamily: "'DM Sans'",
-                        }}
-                    />
-                    <button onClick={submit} disabled={checking} style={{
-                        padding: "8px 16px", borderRadius: 8, border: "none",
-                        background: "linear-gradient(135deg, #00cec9, #00cec988)",
-                        color: "#fff", fontSize: 12, cursor: checking ? "wait" : "pointer",
-                        fontFamily: "'DM Sans'", fontWeight: 500, opacity: checking ? 0.6 : 1,
-                    }}>
-                        {checking ? "..." : "→"}
-                    </button>
-                </div>
-                {error && <div style={{ marginTop: 10, fontSize: 11, color: "#e74c3c" }}>{error}</div>}
-            </div>
-        </div>
-    );
-}
-
-// ═══════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════
-function Dashboard() {
+export default function App() {
     const [bg, setBg] = useState("linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)");
     const [greeting, setGreeting] = useState("Plan your week, not just your tasks.");
     const [accent, setAccent] = useState("#00cec9");
@@ -842,9 +756,9 @@ function Dashboard() {
     const [budget, setBudgetVal] = useState(500);
     const [input, setInput] = useState(""), [loading, setLoading] = useState(false);
     const [lennyMood, setLennyMood] = useState("neutral");
-    const [msgs, setMsgs] = useState([{ role: "assistant", text: "Ready! (Gemini Flash)\n\n• \"make it cozy\"\n• \"check off documentation\"\n• \"meeting this friday 2pm\"\n• \"I spent €12 on lunch\"\n• \"focus mode\"" }]);
+    const [msgs, setMsgs] = useState([{ role: "assistant", text: `Ready! (${LLM_CONFIG.mode === "local" ? "local LLM" : "API"})\n\n• "make it cozy"\n• "check off documentation"\n• "meeting this friday 2pm"\n• "I spent €12 on lunch"\n• "focus mode"` }]);
 
-    const scrollRef = useRef(null), inputRef = useRef(null), idRef = useRef(300);
+    const scrollRef = useRef(null), inputRef = useRef(null), idRef = useRef(300), ambientTimerRef = useRef(null);
     const gid = () => `i${idRef.current++}`;
     useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, loading]);
 
@@ -946,10 +860,16 @@ function Dashboard() {
                 // Still fire ambient for visual effects (particles/glow) if no ambient action came back
                 const hasAmbient = r.actions.some(a => a.type === "adjust_ambient");
                 if (!hasAmbient) {
-                    callAmbientLLM(`User said: "${txt}". Actions taken: ${r.actions.map(a => a.type).join(", ") || "none"}. Emotional weight?`).then(ar => {
-                        const safe = (ar.actions || []).filter(a => a.type === "adjust_ambient");
-                        if (safe.length) exec(safe);
-                    });
+                    // Debounce: fire after main reply is rendered to avoid queuing
+                    // behind the primary inference call on the serial llama-server.
+                    clearTimeout(ambientTimerRef.current);
+                    const ambientMsg = `User said: "${txt}". Actions taken: ${r.actions.map(a => a.type).join(", ") || "none"}. Emotional weight?`;
+                    ambientTimerRef.current = setTimeout(() => {
+                        callAmbientLLM(ambientMsg).then(ar => {
+                            const safe = (ar.actions || []).filter(a => a.type === "adjust_ambient");
+                            if (safe.length) exec(safe);
+                        });
+                    }, 1500);
                 }
             }
         } catch {
@@ -1038,9 +958,8 @@ function Dashboard() {
                 <div style={{ position: "relative", zIndex: 50, padding: "14px 24px 8px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}>
                     <div style={{ maxWidth: 560 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
-                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, color: txm, letterSpacing: 1.7, textTransform: "uppercase" }}>Adaptive Student Planner</span>
-                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, letterSpacing: 1, padding: "2px 7px", borderRadius: 999, background: `${accent}18`, color: accent, border: `1px solid ${accent}33` }}>TRINITY MODE</span>
-                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, letterSpacing: 1, padding: "2px 7px", borderRadius: 999, background: "rgba(66,133,244,0.15)", color: "#4285f4", border: "1px solid rgba(66,133,244,0.25)" }}>GEMINI FLASH</span>
+                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, color: txm, letterSpacing: 1.7, textTransform: "uppercase" }}>Adaptive Dashboard</span>
+                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, letterSpacing: 1, padding: "2px 7px", borderRadius: 999, background: "rgba(0,184,148,0.15)", color: "#00b894", border: "1px solid rgba(0,184,148,0.25)" }}>LOCAL</span>
                         </div>
                         <h1 style={{ fontFamily: "'DM Sans'", fontWeight: 300, fontSize: 24, margin: 0, letterSpacing: -0.5, color: light ? "rgba(45,52,54,0.92)" : "rgba(255,255,255,0.92)" }}>{greeting}</h1>
                         <div style={{ fontSize: 11.5, lineHeight: 1.45, marginTop: 5, color: light ? "rgba(45,52,54,0.62)" : "rgba(255,255,255,0.58)", maxWidth: 500 }}>
@@ -1131,7 +1050,7 @@ function Dashboard() {
                         <div style={{ width: 26, height: 26, borderRadius: 7, background: `linear-gradient(135deg, ${accent}, ${accent}88)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, transition: "background 0.8s" }}>⚡</div>
                         <div>
                             <div style={{ fontSize: 12, fontWeight: 600 }}>Study Copilot</div>
-                            <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 1 }}>{loading ? "THINKING..." : "LOCAL PLANNING CHAT"}</div>
+                            <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 1 }}>{loading ? "THINKING..." : "LOCAL LLM"}</div>
                         </div>
                     </div>
                 </div>
@@ -1160,13 +1079,4 @@ function Dashboard() {
             </div>
         </div>
     </>;
-}
-
-// ═══════════════════════════════════════════════════
-// APP WRAPPER WITH PASSPHRASE GATE
-// ═══════════════════════════════════════════════════
-export default function App() {
-    const [unlocked, setUnlocked] = useState(false);
-    if (!unlocked) return <PassphraseGate onUnlock={() => setUnlocked(true)} />;
-    return <Dashboard />;
 }
