@@ -959,7 +959,6 @@ function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemov
     const [searching, setSearching] = useState(false);
     const [searchStep, setSearchStep] = useState("");
     const [searchQuery, setSearchQuery] = useState(tcdDegree?.name || "");
-    const [searchYear, setSearchYear] = useState(tcdDegree?.year || 1);
     // urlResults: list of candidate URLs from DDG search
     const [urlResults, setUrlResults] = useState(null);
     // moduleResults: parsed modules from a chosen/direct URL
@@ -985,12 +984,12 @@ function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemov
         if (!searchQuery.trim()) return;
         setShowWarn(false);
         setSearching(true);
-        setSearchStep("Searching DuckDuckGo…");
+        setSearchStep("Searching portal…");
         setModuleResults(null);
         try {
             const data = await searchTCDCourse(searchQuery);
             setUrlResults({ urls: data.urls || [], query: searchQuery });
-            onSetDegree({ name: searchQuery, year: searchYear, type: searchYear > 4 ? "postgrad" : "undergraduate", college: "Trinity College Dublin" });
+            onSetDegree({ name: searchQuery, college: "Trinity College Dublin" });
         } catch (err) {
             setUrlResults({ urls: [], query: searchQuery, error: err.message });
         }
@@ -1069,37 +1068,32 @@ function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemov
         <Panel x={650} y={320} width={380} title={`TCD Modules · ${modules.length} registered · ${totalCredits} ECTS`} icon="🎓" light={light} onClose={onClose} ambient={ambient} accent={accent}>
             {/* Degree search bar */}
             <div style={{ marginBottom: 8, padding: "8px 10px", borderRadius: 8, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.04)", border: `1px solid ${bd}` }}>
-                {tcdDegree && <div style={{ fontSize: 8, fontFamily: "'JetBrains Mono'", color: accent, marginBottom: 5, letterSpacing: 1 }}>🎓 {tcdDegree.college} · {tcdDegree.name} · {tcdDegree.year > 4 ? `Postgrad Yr ${tcdDegree.year - 4}` : ["","JF","SF","JS","SS"][tcdDegree.year]}</div>}
+                {tcdDegree && <div style={{ fontSize: 8, fontFamily: "'JetBrains Mono'", color: accent, marginBottom: 5, letterSpacing: 1 }}>🎓 {tcdDegree.college} · {tcdDegree.name}</div>}
                 {!showDirectMode ? (
                     <>
-                        <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
-                            <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSearchClick()} placeholder="Course name (e.g. Computer Science)" data-nodrag
+                        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                            <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSearchClick()} placeholder="Search SCSS programmes…" data-nodrag
                                 style={{ flex: 1, background: "transparent", border: "none", outline: "none", fontSize: 11, color: tx, fontFamily: "'DM Sans'", minWidth: 120 }} />
-                            <select value={searchYear} onChange={e => setSearchYear(Number(e.target.value))} data-nodrag style={selStyle}>
-                                <option value={1}>JF · Yr 1</option><option value={2}>SF · Yr 2</option>
-                                <option value={3}>JS · Yr 3</option><option value={4}>SS · Yr 4</option>
-                                <option value={5}>PG Yr 1</option><option value={6}>PG Yr 2</option>
-                            </select>
                             <button onClick={handleSearchClick} disabled={searching} style={{ padding: "3px 9px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, opacity: searching ? 0.6 : 1 }}>
-                                {searching ? searchStep || "…" : "🔍 Search TCD"}
+                                {searching ? searchStep || "…" : "Search"}
                             </button>
                         </div>
-                        <div style={{ marginTop: 5, textAlign: "right" }}>
-                            <button onClick={() => setShowDirectMode(true)} style={{ fontSize: 8, background: "none", border: "none", cursor: "pointer", color: txm, fontFamily: "'JetBrains Mono'", textDecoration: "underline" }}>paste URL instead</button>
+                        <div style={{ marginTop: 4, fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'" }}>
+                            Searches the SCSS teaching portal · <button onClick={() => setShowDirectMode(true)} style={{ fontSize: 8, background: "none", border: "none", cursor: "pointer", color: accent, fontFamily: "'JetBrains Mono'", textDecoration: "underline", padding: 0 }}>paste URL for any other course →</button>
                         </div>
                     </>
                 ) : (
                     <>
-                        <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", marginBottom: 4 }}>Paste a TCD module listing URL (e.g. teaching.scss.tcd.ie/…)</div>
+                        <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", marginBottom: 4 }}>Paste a module listing page URL from any TCD department</div>
                         <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-                            <input value={directUrl} onChange={e => setDirectUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && handleDirectClick()} placeholder="https://teaching.scss.tcd.ie/…" data-nodrag
+                            <input value={directUrl} onChange={e => setDirectUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && handleDirectClick()} placeholder="https://…" data-nodrag
                                 style={{ flex: 1, background: "transparent", border: `1px solid ${bd}`, borderRadius: 4, outline: "none", fontSize: 9, color: tx, fontFamily: "'DM Sans'", padding: "3px 6px" }} />
                             <button onClick={handleDirectClick} disabled={searching} style={{ padding: "3px 9px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, opacity: searching ? 0.6 : 1 }}>
                                 {searching ? searchStep || "…" : "Fetch"}
                             </button>
                         </div>
                         <div style={{ marginTop: 4, fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'" }}>
-                            Hints: <span style={{ cursor: "pointer", textDecoration: "underline" }} onClick={() => setDirectUrl("https://teaching.scss.tcd.ie/general-information/scss-modules/")}>SCSS modules</span>
+                            e.g. <span style={{ cursor: "pointer", color: accent, textDecoration: "underline" }} onClick={() => setDirectUrl("https://teaching.scss.tcd.ie/general-information/scss-modules/")}>scss-modules</span>
                             {" · "}<button onClick={() => setShowDirectMode(false)} style={{ fontSize: 8, background: "none", border: "none", cursor: "pointer", color: txm, fontFamily: "'JetBrains Mono'", textDecoration: "underline", padding: 0 }}>back to search</button>
                         </div>
                     </>
@@ -1113,7 +1107,7 @@ function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemov
                     <div style={{ fontSize: 10, color: tx, lineHeight: 1.5, marginBottom: 8 }}>
                         {pendingAction === "direct"
                             ? <>Fetching <strong>{directUrl.slice(0, 50)}{directUrl.length > 50 ? "…" : ""}</strong> will contact that server directly.</>
-                            : <>Searching for <strong>"{searchQuery}"</strong> will send a query to <strong>DuckDuckGo</strong> via the local search server.</>
+                            : <>Searching will fetch the <strong>SCSS teaching portal sitemap</strong> from teaching.scss.tcd.ie.</>
                         }
                         {" "}This is the <em>only</em> part of this dashboard that uses an internet connection — everything else runs on-device.
                     </div>
@@ -1135,7 +1129,9 @@ function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemov
                     </div>
                     {urlResults.error && <div style={{ fontSize: 9, color: "#e74c3c", marginBottom: 4 }}>{urlResults.error}</div>}
                     {urlResults.urls.length === 0 && !urlResults.error && (
-                        <div style={{ fontSize: 10, color: txm, fontStyle: "italic" }}>Try the direct URL mode or refine your search query.</div>
+                        <div style={{ fontSize: 10, color: txm, lineHeight: 1.5 }}>
+                            No match in the SCSS portal. For other TCD courses (Philosophy, Law, Business, etc.) find your department's module listing page and use <span style={{ color: accent, cursor: "pointer", textDecoration: "underline" }} onClick={() => { setUrlResults(null); setShowDirectMode(true); }}>paste URL</span>.
+                        </div>
                     )}
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                         {urlResults.urls.map((r, i) => (
