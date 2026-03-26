@@ -933,53 +933,23 @@ function WeatherWidget({ light, accent, ambient, onClose }) {
 // TCD SEARCH & PARSER
 // ═══════════════════════════════════════════════════
 async function searchTCDCourse(courseName) {
-    const query = `Trinity College Dublin "${courseName}" modules undergraduate site:tcd.ie`;
     const res = await fetch("/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q: query, num: 10 }),
+        body: JSON.stringify({ q: courseName }),
     });
     if (!res.ok) throw new Error(`Search server returned ${res.status} — is it running?`);
     return res.json();
 }
 
-function parseTCDModulesFromResults(results) {
-    const modules = [];
-    const seen = new Set();
-    const codeRe = /\b([A-Z]{2,4})\s?(\d{4})\b/g;
-    const ectsRe = /(\d+)\s*(?:ECTS|credit)/i;
-    const semRe = { michaelmas: /michaelmas|mt\b/i, hilary: /hilary|ht\b/i, trinity: /trinity\s*term|tt\b/i };
-
-    const items = (results.organic || []);
-    if (results.answerBox) items.unshift({ title: results.answerBox.title || "", snippet: results.answerBox.answer || "" });
-
-    items.forEach(item => {
-        const text = `${item.title || ""} ${item.snippet || ""}`;
-        codeRe.lastIndex = 0;
-        let match;
-        while ((match = codeRe.exec(text)) !== null) {
-            const code = `${match[1]}${match[2]}`;
-            if (seen.has(code)) continue;
-            seen.add(code);
-
-            const idx = match.index;
-            const ctx = text.slice(idx, idx + code.length + 80);
-            const ectsMatch = ctx.match(ectsRe);
-            const credits = ectsMatch ? parseInt(ectsMatch[1]) : 5;
-
-            let semester = "michaelmas";
-            const surrounding = text.slice(Math.max(0, idx - 120), idx + 120);
-            for (const [sem, re] of Object.entries(semRe)) {
-                if (re.test(surrounding)) { semester = sem; break; }
-            }
-
-            const afterCode = ctx.slice(code.length).replace(/^\s*[-–:]\s*/, "").trim();
-            const rawName = afterCode.split(/[,\n;:(]/)[0].trim();
-            const name = rawName.slice(0, 60);
-            if (name.length > 2) modules.push({ code, name, credits, semester, moduleType: "lecture" });
-        }
+async function searchTCDDirect(url) {
+    const res = await fetch("/search/tcd-direct", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
     });
-    return modules.slice(0, 25);
+    if (!res.ok) throw new Error(`Search server returned ${res.status}`);
+    return res.json();
 }
 
 // ═══════════════════════════════════════════════════
@@ -987,13 +957,18 @@ function parseTCDModulesFromResults(results) {
 // ═══════════════════════════════════════════════════
 function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemoveModule, accent, light, onClose, ambient }) {
     const [searching, setSearching] = useState(false);
+    const [searchStep, setSearchStep] = useState("");
     const [searchQuery, setSearchQuery] = useState(tcdDegree?.name || "");
     const [searchYear, setSearchYear] = useState(tcdDegree?.year || 1);
-    const [searchResults, setSearchResults] = useState(null);
-    // Privacy: require explicit confirmation before the first internet request.
-    // Persisted to sessionStorage so it resets when the tab closes.
+    // urlResults: list of candidate URLs from DDG search
+    const [urlResults, setUrlResults] = useState(null);
+    // moduleResults: parsed modules from a chosen/direct URL
+    const [moduleResults, setModuleResults] = useState(null);
+    const [directUrl, setDirectUrl] = useState("");
+    const [showDirectMode, setShowDirectMode] = useState(false);
     const [warnAcked, setWarnAcked] = useState(() => sessionStorage.getItem("tcd_search_acked") === "1");
     const [showWarn, setShowWarn] = useState(false);
+    const [pendingAction, setPendingAction] = useState(null);
     const [addForm, setAddForm] = useState(false);
     const [formCode, setFormCode] = useState(""), [formName, setFormName] = useState("");
     const [formCredits, setFormCredits] = useState("5"), [formSemester, setFormSemester] = useState("michaelmas"), [formType, setFormType] = useState("lecture");
@@ -1005,31 +980,75 @@ function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemov
     const semGroups = {};
     modules.forEach(m => { const s = m.semester || "michaelmas"; if (!semGroups[s]) semGroups[s] = []; semGroups[s].push(m); });
 
+    // Stage 1: search DDG → get candidate URLs
     const runSearch = async () => {
         if (!searchQuery.trim()) return;
         setShowWarn(false);
         setSearching(true);
+        setSearchStep("Searching DuckDuckGo…");
+        setModuleResults(null);
         try {
             const data = await searchTCDCourse(searchQuery);
-            const parsed = parseTCDModulesFromResults(data);
-            setSearchResults({ parsed, query: searchQuery });
+            setUrlResults({ urls: data.urls || [], query: searchQuery });
             onSetDegree({ name: searchQuery, year: searchYear, type: searchYear > 4 ? "postgrad" : "undergraduate", college: "Trinity College Dublin" });
         } catch (err) {
-            setSearchResults({ error: err.message, parsed: [] });
+            setUrlResults({ urls: [], query: searchQuery, error: err.message });
         }
         setSearching(false);
+        setSearchStep("");
+    };
+
+    // Stage 2: fetch modules from a chosen URL
+    const runFetchUrl = async (url) => {
+        setSearching(true);
+        setSearchStep("Fetching page…");
+        setUrlResults(null);
+        try {
+            const data = await searchTCDDirect(url);
+            setModuleResults({ parsed: data.modules || [], url });
+        } catch (err) {
+            setModuleResults({ parsed: [], url, error: err.message });
+        }
+        setSearching(false);
+        setSearchStep("");
+    };
+
+    // Direct URL paste (unchanged flow)
+    const runDirect = async () => {
+        if (!directUrl.trim()) return;
+        setShowWarn(false);
+        setSearching(true);
+        setSearchStep("Fetching page…");
+        try {
+            const data = await searchTCDDirect(directUrl.trim());
+            setModuleResults({ parsed: data.modules || [], url: directUrl.trim() });
+        } catch (err) {
+            setModuleResults({ parsed: [], url: directUrl.trim(), error: err.message });
+        }
+        setSearching(false);
+        setSearchStep("");
     };
 
     const handleSearchClick = () => {
         if (!searchQuery.trim()) return;
         if (warnAcked) { runSearch(); return; }
+        setPendingAction("search");
+        setShowWarn(true);
+    };
+
+    const handleDirectClick = () => {
+        if (!directUrl.trim()) return;
+        if (warnAcked) { runDirect(); return; }
+        setPendingAction("direct");
         setShowWarn(true);
     };
 
     const confirmSearch = () => {
         sessionStorage.setItem("tcd_search_acked", "1");
         setWarnAcked(true);
-        runSearch();
+        const action = pendingAction;
+        setPendingAction(null);
+        if (action === "direct") runDirect(); else runSearch();
     };
 
     const addManual = () => {
@@ -1039,8 +1058,8 @@ function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemov
     };
 
     const importAll = () => {
-        (searchResults?.parsed || []).forEach((m, i) => onAddModule({ ...m, id: `m${Date.now()}${i}`, color: MODULE_COLORS[(modules.length + i) % MODULE_COLORS.length] }));
-        setSearchResults(null);
+        (moduleResults?.parsed || []).forEach((m, i) => onAddModule({ ...m, id: `m${Date.now()}${i}`, color: MODULE_COLORS[(modules.length + i) % MODULE_COLORS.length] }));
+        setModuleResults(null);
     };
 
     const selStyle = { background: light ? "rgba(255,255,255,0.8)" : "rgba(30,30,50,0.8)", border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, outline: "none", colorScheme: light ? "light" : "dark" };
@@ -1049,52 +1068,114 @@ function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemov
     return (
         <Panel x={650} y={320} width={380} title={`TCD Modules · ${modules.length} registered · ${totalCredits} ECTS`} icon="🎓" light={light} onClose={onClose} ambient={ambient} accent={accent}>
             {/* Degree search bar */}
-            <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 8, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.04)", border: `1px solid ${bd}` }}>
+            <div style={{ marginBottom: 8, padding: "8px 10px", borderRadius: 8, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.04)", border: `1px solid ${bd}` }}>
                 {tcdDegree && <div style={{ fontSize: 8, fontFamily: "'JetBrains Mono'", color: accent, marginBottom: 5, letterSpacing: 1 }}>🎓 {tcdDegree.college} · {tcdDegree.name} · {tcdDegree.year > 4 ? `Postgrad Yr ${tcdDegree.year - 4}` : ["","JF","SF","JS","SS"][tcdDegree.year]}</div>}
-                <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
-                    <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSearchClick()} placeholder="Course name (e.g. Computer Science)" data-nodrag
-                        style={{ flex: 1, background: "transparent", border: "none", outline: "none", fontSize: 11, color: tx, fontFamily: "'DM Sans'", minWidth: 120 }} />
-                    <select value={searchYear} onChange={e => setSearchYear(Number(e.target.value))} data-nodrag style={selStyle}>
-                        <option value={1}>JF · Yr 1</option><option value={2}>SF · Yr 2</option>
-                        <option value={3}>JS · Yr 3</option><option value={4}>SS · Yr 4</option>
-                        <option value={5}>PG Yr 1</option><option value={6}>PG Yr 2</option>
-                    </select>
-                    <button onClick={handleSearchClick} disabled={searching} style={{ padding: "3px 9px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, opacity: searching ? 0.6 : 1 }}>
-                        {searching ? "..." : "🔍 Search TCD"}
-                    </button>
-                </div>
+                {!showDirectMode ? (
+                    <>
+                        <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
+                            <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSearchClick()} placeholder="Course name (e.g. Computer Science)" data-nodrag
+                                style={{ flex: 1, background: "transparent", border: "none", outline: "none", fontSize: 11, color: tx, fontFamily: "'DM Sans'", minWidth: 120 }} />
+                            <select value={searchYear} onChange={e => setSearchYear(Number(e.target.value))} data-nodrag style={selStyle}>
+                                <option value={1}>JF · Yr 1</option><option value={2}>SF · Yr 2</option>
+                                <option value={3}>JS · Yr 3</option><option value={4}>SS · Yr 4</option>
+                                <option value={5}>PG Yr 1</option><option value={6}>PG Yr 2</option>
+                            </select>
+                            <button onClick={handleSearchClick} disabled={searching} style={{ padding: "3px 9px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, opacity: searching ? 0.6 : 1 }}>
+                                {searching ? searchStep || "…" : "🔍 Search TCD"}
+                            </button>
+                        </div>
+                        <div style={{ marginTop: 5, textAlign: "right" }}>
+                            <button onClick={() => setShowDirectMode(true)} style={{ fontSize: 8, background: "none", border: "none", cursor: "pointer", color: txm, fontFamily: "'JetBrains Mono'", textDecoration: "underline" }}>paste URL instead</button>
+                        </div>
+                    </>
+                ) : (
+                    <>
+                        <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", marginBottom: 4 }}>Paste a TCD module listing URL (e.g. teaching.scss.tcd.ie/…)</div>
+                        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                            <input value={directUrl} onChange={e => setDirectUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && handleDirectClick()} placeholder="https://teaching.scss.tcd.ie/…" data-nodrag
+                                style={{ flex: 1, background: "transparent", border: `1px solid ${bd}`, borderRadius: 4, outline: "none", fontSize: 9, color: tx, fontFamily: "'DM Sans'", padding: "3px 6px" }} />
+                            <button onClick={handleDirectClick} disabled={searching} style={{ padding: "3px 9px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, opacity: searching ? 0.6 : 1 }}>
+                                {searching ? searchStep || "…" : "Fetch"}
+                            </button>
+                        </div>
+                        <div style={{ marginTop: 4, fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'" }}>
+                            Hints: <span style={{ cursor: "pointer", textDecoration: "underline" }} onClick={() => setDirectUrl("https://teaching.scss.tcd.ie/general-information/scss-modules/")}>SCSS modules</span>
+                            {" · "}<button onClick={() => setShowDirectMode(false)} style={{ fontSize: 8, background: "none", border: "none", cursor: "pointer", color: txm, fontFamily: "'JetBrains Mono'", textDecoration: "underline", padding: 0 }}>back to search</button>
+                        </div>
+                    </>
+                )}
             </div>
 
-            {/* Privacy warning — shown once per session before the first internet request */}
+            {/* Privacy warning */}
             {showWarn && (
                 <div className="anim-panel" style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 8, background: light ? "rgba(253,203,110,0.15)" : "rgba(253,203,110,0.1)", border: "1px solid rgba(253,203,110,0.4)" }} data-nodrag>
                     <div style={{ fontSize: 10, fontWeight: 600, color: "#e67e22", marginBottom: 4, fontFamily: "'JetBrains Mono'" }}>⚠ External search</div>
                     <div style={{ fontSize: 10, color: tx, lineHeight: 1.5, marginBottom: 8 }}>
-                        Searching for <strong>"{searchQuery}"</strong> will send a query to <strong>DuckDuckGo</strong> via the local search server. This is the <em>only</em> part of this dashboard that uses an internet connection — everything else runs on-device.
+                        {pendingAction === "direct"
+                            ? <>Fetching <strong>{directUrl.slice(0, 50)}{directUrl.length > 50 ? "…" : ""}</strong> will contact that server directly.</>
+                            : <>Searching for <strong>"{searchQuery}"</strong> will send a query to <strong>DuckDuckGo</strong> via the local search server.</>
+                        }
+                        {" "}This is the <em>only</em> part of this dashboard that uses an internet connection — everything else runs on-device.
                     </div>
                     <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={confirmSearch} style={{ flex: 1, padding: "4px", borderRadius: 5, fontSize: 9, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}55`, color: accent, fontFamily: "'JetBrains Mono'" }}>Search anyway</button>
-                        <button onClick={() => setShowWarn(false)} style={{ padding: "4px 10px", borderRadius: 5, fontSize: 9, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>Cancel</button>
+                        <button onClick={confirmSearch} style={{ flex: 1, padding: "4px", borderRadius: 5, fontSize: 9, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}55`, color: accent, fontFamily: "'JetBrains Mono'" }}>Proceed</button>
+                        <button onClick={() => { setShowWarn(false); setPendingAction(null); }} style={{ padding: "4px 10px", borderRadius: 5, fontSize: 9, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>Cancel</button>
                     </div>
                 </div>
             )}
 
-            {/* Search results */}
-            {searchResults?.error && <div style={{ marginBottom: 8, padding: "6px 8px", borderRadius: 6, background: "rgba(231,76,60,0.08)", border: "1px solid rgba(231,76,60,0.2)", fontSize: 10, color: "#e74c3c" }}>Search failed: {searchResults.error}</div>}
-            {searchResults && !searchResults.error && (
+            {/* Stage 1: URL candidates from DDG */}
+            {urlResults && (
                 <div className="anim-panel" style={{ marginBottom: 10, padding: 8, borderRadius: 8, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)", border: `1px solid ${accent}33` }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
-                        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: accent }}>{searchResults.parsed.length > 0 ? `Found ${searchResults.parsed.length} modules` : "No modules found in snippets"}</span>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: accent }}>
+                            {urlResults.urls.length > 0 ? `${urlResults.urls.length} pages found — pick the right one` : "No TCD pages found"}
+                        </span>
+                        <button onClick={() => setUrlResults(null)} style={{ padding: "2px 6px", borderRadius: 4, fontSize: 8, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>×</button>
+                    </div>
+                    {urlResults.error && <div style={{ fontSize: 9, color: "#e74c3c", marginBottom: 4 }}>{urlResults.error}</div>}
+                    {urlResults.urls.length === 0 && !urlResults.error && (
+                        <div style={{ fontSize: 10, color: txm, fontStyle: "italic" }}>Try the direct URL mode or refine your search query.</div>
+                    )}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {urlResults.urls.map((r, i) => (
+                            <div key={i} style={{ padding: "5px 7px", borderRadius: 6, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.04)", border: `1px solid ${bd}` }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: 10, color: tx, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.title}</div>
+                                        <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>{r.url.replace(/^https?:\/\//, "")}</div>
+                                    </div>
+                                    <button onClick={() => runFetchUrl(r.url)} style={{ flexShrink: 0, padding: "3px 8px", borderRadius: 4, fontSize: 9, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, fontFamily: "'JetBrains Mono'" }}>
+                                        Load →
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Stage 2: modules from chosen URL */}
+            {moduleResults?.error && <div style={{ marginBottom: 8, padding: "6px 8px", borderRadius: 6, background: "rgba(231,76,60,0.08)", border: "1px solid rgba(231,76,60,0.2)", fontSize: 10, color: "#e74c3c" }}>Failed: {moduleResults.error}</div>}
+            {moduleResults && !moduleResults.error && (
+                <div className="anim-panel" style={{ marginBottom: 10, padding: 8, borderRadius: 8, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)", border: `1px solid ${accent}33` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: accent }}>
+                            {moduleResults.parsed.length > 0 ? `${moduleResults.parsed.length} modules found` : "No modules found"}
+                        </span>
                         <div style={{ display: "flex", gap: 4 }}>
-                            {searchResults.parsed.length > 0 && <button onClick={importAll} style={{ padding: "2px 7px", borderRadius: 4, fontSize: 8, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, fontFamily: "'JetBrains Mono'" }}>Import all</button>}
-                            <button onClick={() => setSearchResults(null)} style={{ padding: "2px 6px", borderRadius: 4, fontSize: 8, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>×</button>
+                            {moduleResults.parsed.length > 0 && <button onClick={importAll} style={{ padding: "2px 7px", borderRadius: 4, fontSize: 8, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, fontFamily: "'JetBrains Mono'" }}>Import all</button>}
+                            <button onClick={() => setModuleResults(null)} style={{ padding: "2px 6px", borderRadius: 4, fontSize: 8, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>×</button>
                         </div>
                     </div>
-                    {searchResults.parsed.length === 0 && <div style={{ fontSize: 10, color: txm, fontStyle: "italic" }}>TCD course pages may require deeper scraping. Add modules manually below, or refine the search query.</div>}
-                    <div style={{ maxHeight: 110, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
-                        {searchResults.parsed.map((m, i) => (
+                    <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", marginBottom: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        ✓ {moduleResults.url.replace(/^https?:\/\//, "")}
+                    </div>
+                    {moduleResults.parsed.length === 0 && <div style={{ fontSize: 10, color: txm, fontStyle: "italic" }}>No module codes found on this page. Try a different URL.</div>}
+                    <div style={{ maxHeight: 130, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
+                        {moduleResults.parsed.map((m, i) => (
                             <div key={i} style={{ display: "flex", gap: 5, alignItems: "center", padding: "2px 0" }}>
-                                <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, fontWeight: 600, color: TCD_SEMESTER_COLORS[m.semester], minWidth: 52 }}>{m.code}</span>
+                                <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, fontWeight: 600, color: TCD_SEMESTER_COLORS[m.semester] || accent, minWidth: 60 }}>{m.code}</span>
                                 <span style={{ flex: 1, fontSize: 10, color: tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
                                 <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: txm }}>{m.credits}cr</span>
                                 <button onClick={() => onAddModule({ ...m, id: `m${Date.now()}${i}`, color: MODULE_COLORS[(modules.length + i) % MODULE_COLORS.length] })}
@@ -1106,7 +1187,7 @@ function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemov
             )}
 
             {/* Module list grouped by semester */}
-            {modules.length === 0 && !searchResults && !showWarn && <div style={{ fontSize: 11, color: txm, fontStyle: "italic", textAlign: "center", padding: "10px 0" }}>Search your TCD course above or add modules manually</div>}
+            {modules.length === 0 && !urlResults && !moduleResults && !showWarn && <div style={{ fontSize: 11, color: txm, fontStyle: "italic", textAlign: "center", padding: "10px 0" }}>Search your TCD course above or add modules manually</div>}
             {["michaelmas", "hilary", "trinity", "yearlong"].filter(s => semGroups[s]?.length > 0).map(sem => (
                 <div key={sem} style={{ marginBottom: 8 }}>
                     <div style={{ fontSize: 8, fontFamily: "'JetBrains Mono'", letterSpacing: 1.5, textTransform: "uppercase", color: TCD_SEMESTER_COLORS[sem], marginBottom: 4 }}>{TCD_SEMESTERS[sem]}</div>
