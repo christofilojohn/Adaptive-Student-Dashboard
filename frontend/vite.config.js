@@ -19,6 +19,12 @@ export default defineConfig({
       '/v1': {
         target: `http://127.0.0.1:${LLM_PORT}`,
         changeOrigin: true
+      },
+      // Proxy TCD course search to the local search server (backend/search-server.mjs).
+      // The server scrapes DuckDuckGo HTML server-side — no API key, fully on-device.
+      '/search': {
+        target: 'http://127.0.0.1:8082',
+        changeOrigin: false
       }
     }
   }

@@ -274,6 +274,32 @@ start_llm() {
   err "LLM server did not start within the timeout. Check .llm.log:\n$(tail -20 "$SCRIPT_DIR/.llm.log")"
 }
 
+# ── Start search server ──────────────────────────────────────
+SEARCH_PORT=8082
+start_search() {
+  if ! command -v node &>/dev/null; then
+    warn "node not found — TCD course search will be unavailable"
+    return
+  fi
+  log "Starting search server on port $SEARCH_PORT..."
+  SEARCH_PORT=$SEARCH_PORT node "$SCRIPT_DIR/backend/search-server.mjs" \
+    > "$SCRIPT_DIR/.search.log" 2>&1 &
+  SEARCH_PID=$!
+  PIDS+=($SEARCH_PID)
+  for i in $(seq 1 10); do
+    sleep 0.4
+    if curl -sf "http://127.0.0.1:$SEARCH_PORT/health" &>/dev/null; then
+      ok "Search server ready (pid: $SEARCH_PID)"
+      return
+    fi
+    if ! kill -0 "$SEARCH_PID" 2>/dev/null; then
+      warn "Search server crashed — check .search.log"
+      return
+    fi
+  done
+  warn "Search server slow to start — check .search.log"
+}
+
 # ── Start frontend ───────────────────────────────────────────
 start_frontend() {
   FRONTEND_DIR="$SCRIPT_DIR/frontend"
@@ -341,12 +367,14 @@ main() {
   ensure_model
   echo ""
   start_llm
+  start_search
   start_frontend
   echo ""
   echo -e "${BOLD}${GREEN}  ✨ Dashboard running!${NC}"
-  echo -e "  ${CYAN}UI:${NC}  http://localhost:$UI_PORT"
-  echo -e "  ${CYAN}LLM:${NC} http://localhost:$LLM_PORT"
-  echo -e "  ${CYAN}GPU:${NC} $GPU_TYPE (ngl=$NGL)"
+  echo -e "  ${CYAN}UI:${NC}     http://localhost:$UI_PORT"
+  echo -e "  ${CYAN}LLM:${NC}    http://localhost:$LLM_PORT"
+  echo -e "  ${CYAN}Search:${NC} http://127.0.0.1:$SEARCH_PORT  (on-device, DuckDuckGo)"
+  echo -e "  ${CYAN}GPU:${NC}    $GPU_TYPE (ngl=$NGL)"
   echo ""
   echo -e "  Press ${BOLD}Ctrl+C${NC} to stop"
   echo ""
