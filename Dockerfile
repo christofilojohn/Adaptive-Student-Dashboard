@@ -52,11 +52,15 @@ ARG BUILD_TYPE=cuda
 ENV BUILD_TYPE=${BUILD_TYPE}
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Runtime libs + Node.js 20 (for the on-device search server)
-RUN apt-get update && apt-get install -y ca-certificates gnupg curl wget && \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y libcurl4 libgomp1 nodejs nginx supervisor && \
+# Runtime libs — Node.js is copied from frontend-builder, no remote script needed
+RUN apt-get update && apt-get install -y ca-certificates curl wget \
+    libcurl4 libgomp1 nginx supervisor && \
     rm -rf /var/lib/apt/lists/*
+
+# Reuse the exact Node binary that built the frontend: same version, no download,
+# no integrity risk from piping a remote script into bash.
+COPY --from=frontend-builder /usr/local/bin/node /usr/local/bin/node
+COPY --from=frontend-builder /usr/local/lib/node_modules /usr/local/lib/node_modules
 
 # CUDA runtime libs (only needed for cuda builds)
 RUN if [ "$BUILD_TYPE" = "cuda" ]; then \

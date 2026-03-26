@@ -220,10 +220,19 @@ async function tcdSearch(courseName) {
     return { urls: urls.slice(0, 8) };
 }
 
+// Only allow https:// requests to tcd.ie domains to prevent SSRF.
+const ALLOWED_HOST = /^(?:[\w-]+\.)*tcd\.ie$/i;
+
 /**
  * Fetch a user-supplied URL directly and parse modules from it.
+ * Rejects any URL that is not an https://…tcd.ie address.
  */
 async function directFetch(url) {
+    let parsed;
+    try { parsed = new URL(url); } catch { throw new Error('invalid url'); }
+    if (parsed.protocol !== 'https:' || !ALLOWED_HOST.test(parsed.hostname)) {
+        throw new Error('URL must be an https://tcd.ie domain');
+    }
     const html = await fetchPage(url);
     return { modules: parseTCDHtml(html), url };
 }
@@ -257,7 +266,7 @@ const server = createServer(async (req, res) => {
     try {
         if (req.url === '/search') {
             if (!body.q) { send(res, 400, { error: 'q required' }); return; }
-            send(res, 200, await tcdSearch(body.q, body.maxPages || 4));
+            send(res, 200, await tcdSearch(body.q));
 
         } else if (req.url === '/tcd-direct' || req.url === '/search/tcd-direct') {
             if (!body.url) { send(res, 400, { error: 'url required' }); return; }
