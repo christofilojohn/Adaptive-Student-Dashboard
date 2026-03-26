@@ -913,6 +913,300 @@ function WeatherWidget({ light, accent, ambient, onClose }) {
 }
 
 // ═══════════════════════════════════════════════════
+// SPOTIFY WIDGET  (PKCE OAuth — no backend needed)
+// ═══════════════════════════════════════════════════
+const SP_SCOPES = "user-read-currently-playing user-read-playback-state user-modify-playback-state";
+const SP_TOKEN_KEY = "sp_token", SP_REFRESH_KEY = "sp_refresh", SP_EXPIRY_KEY = "sp_expiry", SP_CLIENT_KEY = "sp_client_id";
+
+function b64url(buf) { return btoa(String.fromCharCode(...new Uint8Array(buf instanceof ArrayBuffer ? buf : buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, ""); }
+async function spChallenge(v) { return b64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v))); }
+function spVerifier() { return b64url(crypto.getRandomValues(new Uint8Array(48))); }
+
+async function spLogin(clientId) {
+    const v = spVerifier();
+    sessionStorage.setItem("sp_cv", v);
+    const ch = await spChallenge(v);
+    window.location.href = "https://accounts.spotify.com/authorize?" + new URLSearchParams({
+        client_id: clientId, response_type: "code",
+        redirect_uri: window.location.href.split("?")[0],
+        scope: SP_SCOPES, code_challenge_method: "S256", code_challenge: ch, state: "sp",
+    });
+}
+
+async function spExchange(code, clientId) {
+    const v = sessionStorage.getItem("sp_cv");
+    sessionStorage.removeItem("sp_cv");
+    const r = await fetch("https://accounts.spotify.com/api/token", {
+        method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: clientId, grant_type: "authorization_code", code, redirect_uri: window.location.href.split("?")[0], code_verifier: v }),
+    });
+    if (!r.ok) throw new Error("exchange failed");
+    return r.json();
+}
+
+async function spRefresh(refreshToken, clientId) {
+    const r = await fetch("https://accounts.spotify.com/api/token", {
+        method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: clientId, grant_type: "refresh_token", refresh_token: refreshToken }),
+    });
+    if (!r.ok) throw new Error("refresh failed");
+    return r.json();
+}
+
+async function spApi(endpoint, token, method = "GET") {
+    const r = await fetch(`https://api.spotify.com/v1/${endpoint}`, { method, headers: { Authorization: `Bearer ${token}` } });
+    if (r.status === 204) return null;
+    if (!r.ok) { const err = new Error("spotify api"); err.status = r.status; throw err; }
+    return r.json();
+}
+
+const WAVE_HEIGHTS = [35, 75, 50, 90, 40, 68, 85, 28, 72, 55, 82, 45];
+
+function SpotifyWidget({ light, accent, ambient, onClose }) {
+    const [clientId, setClientId] = useState(() => localStorage.getItem(SP_CLIENT_KEY) || "");
+    const [token, setToken] = useState(() => localStorage.getItem(SP_TOKEN_KEY) || "");
+    const [refreshToken, setRefreshToken] = useState(() => localStorage.getItem(SP_REFRESH_KEY) || "");
+    const [tokenExpiry, setTokenExpiry] = useState(() => Number(localStorage.getItem(SP_EXPIRY_KEY)) || 0);
+    const [track, setTrack] = useState(null);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [progress, setProgress] = useState(0);
+    const [duration, setDuration] = useState(1);
+    const [err, setErr] = useState(null);
+    const [editingClientId, setEditingClientId] = useState(!localStorage.getItem(SP_CLIENT_KEY));
+    const [tempClientId, setTempClientId] = useState(() => localStorage.getItem(SP_CLIENT_KEY) || "");
+
+    const { pos, onMouseDown } = useDraggable(880, 320);
+    const tx = light ? "#2d3436" : "#fff";
+    const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
+    const c = light ? { bg: "rgba(255,255,255,0.65)", bd: "rgba(0,0,0,0.08)" } : { bg: "rgba(255,255,255,0.04)", bd: "rgba(255,255,255,0.08)" };
+    const spGreen = "#1DB954";
+
+    // Handle OAuth callback on mount
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get("code"), state = params.get("state");
+        if (code && state === "sp") {
+            const cid = localStorage.getItem(SP_CLIENT_KEY) || clientId;
+            if (!cid) return;
+            window.history.replaceState({}, "", window.location.pathname);
+            spExchange(code, cid).then(data => {
+                const expiry = Date.now() + data.expires_in * 1000;
+                localStorage.setItem(SP_TOKEN_KEY, data.access_token);
+                if (data.refresh_token) localStorage.setItem(SP_REFRESH_KEY, data.refresh_token);
+                localStorage.setItem(SP_EXPIRY_KEY, String(expiry));
+                setToken(data.access_token);
+                if (data.refresh_token) setRefreshToken(data.refresh_token);
+                setTokenExpiry(expiry);
+                setErr(null);
+            }).catch(() => setErr("Auth failed — try again"));
+        }
+    }, []);
+
+    const getToken = useCallback(async () => {
+        if (token && Date.now() < tokenExpiry - 60000) return token;
+        if (!refreshToken || !clientId) return null;
+        try {
+            const data = await spRefresh(refreshToken, clientId);
+            const expiry = Date.now() + data.expires_in * 1000;
+            localStorage.setItem(SP_TOKEN_KEY, data.access_token);
+            if (data.refresh_token) { localStorage.setItem(SP_REFRESH_KEY, data.refresh_token); setRefreshToken(data.refresh_token); }
+            localStorage.setItem(SP_EXPIRY_KEY, String(expiry));
+            setToken(data.access_token);
+            setTokenExpiry(expiry);
+            return data.access_token;
+        } catch { return null; }
+    }, [token, tokenExpiry, refreshToken, clientId]);
+
+    // Poll currently playing every 5s
+    useEffect(() => {
+        if (!token && !refreshToken) return;
+        let cancelled = false;
+        async function poll() {
+            if (cancelled) return;
+            const t = await getToken();
+            if (!t || cancelled) return;
+            try {
+                const data = await spApi("me/player/currently-playing", t);
+                if (cancelled) return;
+                if (!data || !data.item) { setTrack(null); setIsPlaying(false); }
+                else { setTrack(data.item); setIsPlaying(data.is_playing); setProgress(data.progress_ms || 0); setDuration(data.item.duration_ms || 1); setErr(null); }
+            } catch (e) {
+                if (!cancelled && e.status === 401) { setToken(""); setTokenExpiry(0); localStorage.setItem(SP_EXPIRY_KEY, "0"); }
+            }
+        }
+        poll();
+        const iv = setInterval(poll, 5000);
+        return () => { cancelled = true; clearInterval(iv); };
+    }, [token, refreshToken, getToken]);
+
+    // Tick progress bar locally while playing
+    useEffect(() => {
+        if (!isPlaying) return;
+        const t = setInterval(() => setProgress(p => Math.min(p + 1000, duration)), 1000);
+        return () => clearInterval(t);
+    }, [isPlaying, duration]);
+
+    const control = async (action) => {
+        const t = await getToken();
+        if (!t) return;
+        const map = { play: ["me/player/play", "PUT"], pause: ["me/player/pause", "PUT"], next: ["me/player/next", "POST"], prev: ["me/player/previous", "POST"] };
+        const [ep, method] = map[action];
+        try {
+            await spApi(ep, t, method);
+            setTimeout(async () => {
+                const tk = await getToken(); if (!tk) return;
+                const data = await spApi("me/player/currently-playing", tk);
+                if (data?.item) { setTrack(data.item); setIsPlaying(data.is_playing); setProgress(data.progress_ms || 0); setDuration(data.item.duration_ms || 1); }
+                else if (action === "pause") setIsPlaying(false);
+            }, 300);
+        } catch { /* ignore */ }
+    };
+
+    const fmt = ms => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+    const connected = !!(token || refreshToken);
+
+    const saveClientId = () => {
+        const id = tempClientId.trim();
+        if (!id) return;
+        localStorage.setItem(SP_CLIENT_KEY, id);
+        setClientId(id);
+        setEditingClientId(false);
+    };
+
+    const redirectUri = typeof window !== "undefined" ? window.location.href.split("?")[0] : "";
+
+    return (
+        <div onMouseDown={onMouseDown} style={{
+            position: "absolute", left: pos.x, top: pos.y, width: 240,
+            background: c.bg, backdropFilter: `blur(${ambient.panelBlur || 20}px)`,
+            border: `1px solid ${c.bd}`, borderTop: `1px solid ${spGreen}40`,
+            borderRadius: 14, cursor: "grab", zIndex: 15, userSelect: "none",
+            overflow: "hidden", animation: "panelIn 0.3s ease-out",
+            boxShadow: `0 8px 32px rgba(0,0,0,0.18), 0 0 0 1px ${spGreen}14`,
+            transition: "border-color 1.5s, background 1.5s, box-shadow 1.5s, transform 0.2s ease",
+        }}>
+            {/* Blurred animated wave bars — background layer when playing */}
+            {isPlaying && (
+                <div aria-hidden style={{
+                    position: "absolute", inset: 0, display: "flex", alignItems: "flex-end",
+                    gap: 3, padding: "0 6px", pointerEvents: "none", zIndex: 0,
+                    filter: "blur(12px)", opacity: light ? 0.13 : 0.2,
+                }}>
+                    {WAVE_HEIGHTS.map((h, i) => (
+                        <div key={i} style={{
+                            flex: 1,
+                            background: `linear-gradient(to top, ${spGreen}, ${spGreen}55)`,
+                            borderRadius: "3px 3px 0 0",
+                            height: `${h}%`,
+                            transformOrigin: "bottom",
+                            animation: `waveBar ${0.65 + (i % 5) * 0.12}s ${i * 0.055}s ease-in-out infinite alternate`,
+                        }} />
+                    ))}
+                </div>
+            )}
+
+            {/* Header */}
+            <div style={{
+                position: "relative", zIndex: 1, display: "flex", alignItems: "center",
+                justifyContent: "space-between", padding: "9px 13px 7px",
+                borderBottom: `1px solid ${c.bd}`,
+                background: `linear-gradient(90deg, ${spGreen}14, transparent)`,
+            }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 12 }}>🎵</span>
+                    <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, textTransform: "uppercase", letterSpacing: 2, color: txm }}>Spotify</span>
+                    {isPlaying && <span style={{ width: 6, height: 6, borderRadius: "50%", background: spGreen, display: "inline-block", animation: "st 1.5s ease-in-out infinite", flexShrink: 0 }} />}
+                </div>
+                <button onClick={onClose} style={{ width: 18, height: 18, border: "none", background: "none", color: txm, cursor: "pointer", fontSize: 14, lineHeight: 1, borderRadius: 4, padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+            </div>
+
+            {/* Content */}
+            <div style={{ position: "relative", zIndex: 1, padding: "11px 13px 13px", cursor: "default" }} onMouseDown={e => e.stopPropagation()}>
+
+                {/* Step 1 — Enter Client ID */}
+                {editingClientId && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                        <div style={{ fontSize: 9.5, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 0.4, lineHeight: 1.65 }}>
+                            Enter your Spotify App<br />Client ID to get started.<br />
+                            <span style={{ color: spGreen }}>developer.spotify.com</span>
+                        </div>
+                        <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 0.3, lineHeight: 1.55, padding: "5px 7px", borderRadius: 6, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.04)", border: `1px solid ${light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.06)"}` }}>
+                            Redirect URI to register:<br /><span style={{ color: spGreen, wordBreak: "break-all" }}>{redirectUri}</span>
+                        </div>
+                        <input data-nodrag value={tempClientId} onChange={e => setTempClientId(e.target.value)} onKeyDown={e => e.key === "Enter" && saveClientId()} placeholder="Paste Client ID…"
+                            style={{ background: light ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.07)", border: `1px solid ${light ? "rgba(0,0,0,0.09)" : "rgba(255,255,255,0.1)"}`, borderRadius: 6, padding: "5px 8px", fontSize: 10, color: tx, outline: "none", fontFamily: "'JetBrains Mono'", width: "100%" }} />
+                        <button onClick={saveClientId} style={{ background: `${spGreen}22`, border: `1px solid ${spGreen}55`, borderRadius: 6, padding: "6px 10px", fontSize: 10, cursor: "pointer", color: spGreen, fontFamily: "'JetBrains Mono'", letterSpacing: 0.5 }}>Save</button>
+                    </div>
+                )}
+
+                {/* Step 2 — Connect (has client ID but no token) */}
+                {!editingClientId && !connected && clientId && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "center", padding: "6px 0" }}>
+                        <div style={{ fontSize: 32 }}>🎧</div>
+                        <div style={{ fontSize: 10, color: txm, textAlign: "center", lineHeight: 1.5, fontFamily: "'DM Sans'" }}>Connect to see<br />what's playing</div>
+                        <button onClick={() => spLogin(clientId)} style={{ background: spGreen, border: "none", borderRadius: 20, padding: "7px 20px", fontSize: 11, fontWeight: 700, cursor: "pointer", color: "#000", fontFamily: "'DM Sans'", letterSpacing: 0.3, boxShadow: `0 4px 14px ${spGreen}55` }}>Connect Spotify</button>
+                        <button onClick={() => setEditingClientId(true)} style={{ background: "none", border: "none", fontSize: 9, color: txm, cursor: "pointer", fontFamily: "'JetBrains Mono'", opacity: 0.6, textDecoration: "underline" }}>Change Client ID</button>
+                    </div>
+                )}
+
+                {/* Step 3 — Player */}
+                {!editingClientId && connected && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        {err && <div style={{ fontSize: 9.5, color: "#e17055", fontFamily: "'JetBrains Mono'" }}>{err}</div>}
+
+                        {!track && !err && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0" }}>
+                                <div style={{ fontSize: 26 }}>🎵</div>
+                                <div style={{ fontSize: 10, color: txm, lineHeight: 1.5 }}>Nothing playing<br /><span style={{ fontSize: 8.5, opacity: 0.7 }}>Open Spotify to start</span></div>
+                            </div>
+                        )}
+
+                        {track && (
+                            <>
+                                {/* Album art + info */}
+                                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                    {track.album?.images?.[0]?.url
+                                        ? <img src={track.album.images[0].url} alt="" style={{ width: 52, height: 52, borderRadius: 8, objectFit: "cover", flexShrink: 0, boxShadow: `0 4px 16px rgba(0,0,0,0.3), 0 0 0 1px ${spGreen}22` }} />
+                                        : <div style={{ width: 52, height: 52, borderRadius: 8, background: `${spGreen}18`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>🎵</div>
+                                    }
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: 12, fontWeight: 600, color: tx, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{track.name}</div>
+                                        <div style={{ fontSize: 9.5, color: txm, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{track.artists?.map(a => a.name).join(", ")}</div>
+                                        <div style={{ fontSize: 8.5, color: txm, opacity: 0.65, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{track.album?.name}</div>
+                                    </div>
+                                </div>
+
+                                {/* Progress */}
+                                <div>
+                                    <div data-nodrag style={{ height: 3, background: light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)", borderRadius: 999, overflow: "hidden" }}>
+                                        <div style={{ height: "100%", width: `${(progress / duration) * 100}%`, background: spGreen, borderRadius: 999, transition: "width 1s linear" }} />
+                                    </div>
+                                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 3 }}>
+                                        <span style={{ fontSize: 8, fontFamily: "'JetBrains Mono'", color: txm }}>{fmt(progress)}</span>
+                                        <span style={{ fontSize: 8, fontFamily: "'JetBrains Mono'", color: txm }}>{fmt(duration)}</span>
+                                    </div>
+                                </div>
+
+                                {/* Controls */}
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16 }}>
+                                    <button data-nodrag onClick={() => control("prev")} style={{ background: "none", border: "none", cursor: "pointer", color: txm, fontSize: 17, padding: 2, display: "flex", alignItems: "center", lineHeight: 1 }}>⏮</button>
+                                    <button data-nodrag onClick={() => control(isPlaying ? "pause" : "play")} style={{ width: 36, height: 36, borderRadius: "50%", border: "none", background: spGreen, cursor: "pointer", color: "#000", fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 3px 12px ${spGreen}55`, flexShrink: 0 }}>
+                                        {isPlaying ? "⏸" : "▶"}
+                                    </button>
+                                    <button data-nodrag onClick={() => control("next")} style={{ background: "none", border: "none", cursor: "pointer", color: txm, fontSize: 17, padding: 2, display: "flex", alignItems: "center", lineHeight: 1 }}>⏭</button>
+                                </div>
+                            </>
+                        )}
+
+                        <button onClick={() => setEditingClientId(true)} style={{ background: "none", border: "none", fontSize: 8, color: txm, cursor: "pointer", fontFamily: "'JetBrains Mono'", letterSpacing: 0.5, opacity: 0.5, alignSelf: "flex-end", marginTop: -4 }}>⚙ settings</button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+// ═══════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════
 export default function App() {
@@ -920,7 +1214,7 @@ export default function App() {
     const [greeting, setGreeting] = useState("Plan your week, not just your tasks.");
     const [accent, setAccent] = useState("#00cec9");
     const [ambient, setAmbient] = useState({ ...DEFAULT_AMBIENT });
-    const [showTasks, setShowTasks] = useState(true), [showCal, setShowCal] = useState(true), [showBudget, setShowBudget] = useState(true), [showRewards, setShowRewards] = useState(true), [showWeather, setShowWeather] = useState(true);
+    const [showTasks, setShowTasks] = useState(true), [showCal, setShowCal] = useState(true), [showBudget, setShowBudget] = useState(true), [showRewards, setShowRewards] = useState(true), [showWeather, setShowWeather] = useState(true), [showSpotify, setShowSpotify] = useState(true);
     const [postits, setPostits] = useState([]);
     const [showPostitLibrary, setShowPostitLibrary] = useState(false);
     const [selectedPostitId, setSelectedPostitId] = useState(null);
@@ -1092,7 +1386,7 @@ export default function App() {
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     const txs = light ? "rgba(45,52,54,0.12)" : "rgba(255,255,255,0.1)";
     const pBd = light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)";
-    const togs = [{ k: "t", l: "Tasks", s: showTasks, f: setShowTasks, i: "✓" }, { k: "c", l: "Calendar", s: showCal, f: setShowCal, i: "📅" }, { k: "b", l: "Budget", s: showBudget, f: setShowBudget, i: "💰" }, { k: "r", l: "Rewards", s: showRewards, f: setShowRewards, i: "⭐" }, { k: "w", l: "Weather", s: showWeather, f: setShowWeather, i: "🌤️" }];
+    const togs = [{ k: "t", l: "Tasks", s: showTasks, f: setShowTasks, i: "✓" }, { k: "c", l: "Calendar", s: showCal, f: setShowCal, i: "📅" }, { k: "b", l: "Budget", s: showBudget, f: setShowBudget, i: "💰" }, { k: "r", l: "Rewards", s: showRewards, f: setShowRewards, i: "⭐" }, { k: "w", l: "Weather", s: showWeather, f: setShowWeather, i: "🌤️" }, { k: "sp", l: "Spotify", s: showSpotify, f: setShowSpotify, i: "🎵" }];
 
     const activeTasks = tasks.filter(t => !t.done && !t.isParent).length;
     const completedTasks = tasks.filter(t => t.done).length;
@@ -1175,6 +1469,7 @@ export default function App() {
             @keyframes itemIn{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:translateX(0)}}
             @keyframes lennyBreathe{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
             @keyframes lennyThink{0%,100%{transform:translateY(0) rotate(0deg)}25%{transform:translateY(-2px) rotate(-3deg)}75%{transform:translateY(-1px) rotate(3deg)}}
+            @keyframes waveBar{0%{transform:scaleY(0.15)}100%{transform:scaleY(1)}}
             .anim-item { animation: itemIn 0.25s ease-out; }
             .anim-panel { animation: panelIn 0.2s ease-out; }
             .panel-shell:hover { transform: translateY(-2px); box-shadow: 0 14px 36px rgba(0,0,0,0.22), 0 0 24px rgba(255,255,255,0.04) !important; }
@@ -1272,6 +1567,7 @@ export default function App() {
                 {showBudget && <BudgetPanel expenses={expenses} budget={budget} accent={accent} light={light} onClose={() => setShowBudget(false)} onDeleteExpense={id => setExpenses(e => e.filter(ex => ex.id !== id))} onAddExpense={manualAddExpense} ambient={ambient} />}
                 {showRewards && <RewardsPanel completedTasks={completedTasks} weeklyGoalTarget={weeklyGoalTarget} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" />}
                 {showWeather && <WeatherWidget light={light} accent={accent} ambient={ambient} onClose={() => setShowWeather(false)} />}
+                {showSpotify && <SpotifyWidget light={light} accent={accent} ambient={ambient} onClose={() => setShowSpotify(false)} />}
 
                 {showPostitLibrary && <div style={{ position: "absolute", inset: 0, zIndex: 120, background: light ? "rgba(245,240,235,0.62)" : "rgba(8,10,18,0.58)", backdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
                     <div className="anim-panel" style={{ width: "min(940px, 92vw)", height: "min(620px, 84vh)", display: "grid", gridTemplateColumns: "320px 1fr", background: light ? "rgba(255,255,255,0.78)" : "rgba(10,12,22,0.82)", border: `1px solid ${pBd}`, borderRadius: 22, overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,0.28)" }}>
