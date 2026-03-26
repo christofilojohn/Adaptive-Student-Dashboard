@@ -1157,34 +1157,52 @@ function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemov
 
             {/* Stage 2: modules from chosen URL */}
             {moduleResults?.error && <div style={{ marginBottom: 8, padding: "6px 8px", borderRadius: 6, background: "rgba(231,76,60,0.08)", border: "1px solid rgba(231,76,60,0.2)", fontSize: 10, color: "#e74c3c" }}>Failed: {moduleResults.error}</div>}
-            {moduleResults && !moduleResults.error && (
-                <div className="anim-panel" style={{ marginBottom: 10, padding: 8, borderRadius: 8, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)", border: `1px solid ${accent}33` }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: accent }}>
-                            {moduleResults.parsed.length > 0 ? `${moduleResults.parsed.length} modules found` : "No modules found"}
-                        </span>
-                        <div style={{ display: "flex", gap: 4 }}>
-                            {moduleResults.parsed.length > 0 && <button onClick={importAll} style={{ padding: "2px 7px", borderRadius: 4, fontSize: 8, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, fontFamily: "'JetBrains Mono'" }}>Import all</button>}
-                            <button onClick={() => setModuleResults(null)} style={{ padding: "2px 6px", borderRadius: 4, fontSize: 8, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>×</button>
+            {moduleResults && !moduleResults.error && (() => {
+                const coreMods = moduleResults.parsed.filter(m => m.category === 'core');
+                const electiveMods = moduleResults.parsed.filter(m => m.category === 'elective');
+                const uncategorised = moduleResults.parsed.filter(m => !m.category);
+                const addGroup = (group, offset = 0) => group.forEach((m, i) =>
+                    onAddModule({ ...m, id: `m${Date.now()}${offset+i}`, color: MODULE_COLORS[(modules.length + offset + i) % MODULE_COLORS.length] })
+                );
+                const ModRow = ({ m, i, globalIdx }) => (
+                    <div style={{ display: "flex", gap: 5, alignItems: "center", padding: "2px 0" }}>
+                        <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, fontWeight: 600, color: TCD_SEMESTER_COLORS[m.semester] || accent, minWidth: 60 }}>{m.code}</span>
+                        <span style={{ flex: 1, fontSize: 10, color: tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
+                        <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: txm }}>{m.credits}cr</span>
+                        <button onClick={() => onAddModule({ ...m, id: `m${Date.now()}${globalIdx}`, color: MODULE_COLORS[(modules.length + globalIdx) % MODULE_COLORS.length] })}
+                            style={{ padding: "1px 6px", borderRadius: 3, fontSize: 9, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, lineHeight: 1 }}>+</button>
+                    </div>
+                );
+                const SectionHeader = ({ label, count, onAddAll }) => (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6, marginBottom: 2 }}>
+                        <span style={{ fontSize: 8, fontFamily: "'JetBrains Mono'", letterSpacing: 1, textTransform: "uppercase", color: label === "Core" ? accent : txm }}>{label} · {count}</span>
+                        {onAddAll && <button onClick={onAddAll} style={{ padding: "1px 7px", borderRadius: 3, fontSize: 8, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, fontFamily: "'JetBrains Mono'" }}>Add all {label.toLowerCase()}</button>}
+                    </div>
+                );
+                return (
+                    <div className="anim-panel" style={{ marginBottom: 10, padding: 8, borderRadius: 8, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)", border: `1px solid ${accent}33` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                            <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: accent }}>
+                                {moduleResults.parsed.length > 0 ? `${moduleResults.parsed.length} modules` : "No modules found"}
+                                {coreMods.length > 0 && <span style={{ color: txm }}> · {coreMods.length} core</span>}
+                            </span>
+                            <div style={{ display: "flex", gap: 4 }}>
+                                {moduleResults.parsed.length > 0 && <button onClick={importAll} style={{ padding: "2px 7px", borderRadius: 4, fontSize: 8, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, fontFamily: "'JetBrains Mono'" }}>All</button>}
+                                <button onClick={() => setModuleResults(null)} style={{ padding: "2px 6px", borderRadius: 4, fontSize: 8, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>×</button>
+                            </div>
+                        </div>
+                        <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            ✓ {moduleResults.url.replace(/^https?:\/\//, "")}
+                        </div>
+                        {moduleResults.parsed.length === 0 && <div style={{ fontSize: 10, color: txm, fontStyle: "italic" }}>No module codes found on this page.</div>}
+                        <div style={{ maxHeight: 180, overflowY: "auto" }}>
+                            {coreMods.length > 0 && <><SectionHeader label="Core" count={coreMods.length} onAddAll={() => { addGroup(coreMods); setModuleResults(null); }} />{coreMods.map((m, i) => <ModRow key={m.code} m={m} i={i} globalIdx={i} />)}</>}
+                            {electiveMods.length > 0 && <><SectionHeader label="Electives" count={electiveMods.length} onAddAll={() => { addGroup(electiveMods, coreMods.length); setModuleResults(null); }} />{electiveMods.map((m, i) => <ModRow key={m.code} m={m} i={i} globalIdx={coreMods.length + i} />)}</>}
+                            {uncategorised.length > 0 && <>{uncategorised.length > 0 && (coreMods.length + electiveMods.length > 0) && <SectionHeader label="Other" count={uncategorised.length} onAddAll={null} />}{uncategorised.map((m, i) => <ModRow key={m.code} m={m} i={i} globalIdx={coreMods.length + electiveMods.length + i} />)}</>}
                         </div>
                     </div>
-                    <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", marginBottom: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        ✓ {moduleResults.url.replace(/^https?:\/\//, "")}
-                    </div>
-                    {moduleResults.parsed.length === 0 && <div style={{ fontSize: 10, color: txm, fontStyle: "italic" }}>No module codes found on this page. Try a different URL.</div>}
-                    <div style={{ maxHeight: 130, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
-                        {moduleResults.parsed.map((m, i) => (
-                            <div key={i} style={{ display: "flex", gap: 5, alignItems: "center", padding: "2px 0" }}>
-                                <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, fontWeight: 600, color: TCD_SEMESTER_COLORS[m.semester] || accent, minWidth: 60 }}>{m.code}</span>
-                                <span style={{ flex: 1, fontSize: 10, color: tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
-                                <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: txm }}>{m.credits}cr</span>
-                                <button onClick={() => onAddModule({ ...m, id: `m${Date.now()}${i}`, color: MODULE_COLORS[(modules.length + i) % MODULE_COLORS.length] })}
-                                    style={{ padding: "1px 6px", borderRadius: 3, fontSize: 9, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, lineHeight: 1 }}>+</button>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
+                );
+            })()}
 
             {/* Module list grouped by semester */}
             {modules.length === 0 && !urlResults && !moduleResults && !showWarn && <div style={{ fontSize: 11, color: txm, fontStyle: "italic", textAlign: "center", padding: "10px 0" }}>Search your TCD course above or add modules manually</div>}

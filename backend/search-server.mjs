@@ -102,6 +102,21 @@ function parseTCDHtml(html) {
     // Remove only non-content elements
     const clean = removeElements(html, 'script', 'style');
 
+    // Build section map from headings: detect core / elective boundaries
+    const sections = [];
+    for (const hm of clean.matchAll(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi)) {
+        const text = stripTags(hm[1]).toLowerCase();
+        if (/core|required|compulsory/.test(text))       sections.push({ pos: hm.index, cat: 'core' });
+        else if (/elective|optional|choice/.test(text))  sections.push({ pos: hm.index, cat: 'elective' });
+    }
+    sections.sort((a, b) => a.pos - b.pos);
+
+    const getCategoryAt = pos => {
+        let cat = null;
+        for (const s of sections) { if (s.pos <= pos) cat = s.cat; else break; }
+        return cat;
+    };
+
     const seen = new Set();
     const mods = [];
 
@@ -132,7 +147,9 @@ function parseTCDHtml(html) {
         const semBefore = detectSemester(prevText);
         const sem = semAfter !== 'michaelmas' ? semAfter : semBefore;
 
-        mods.push({ code, name, credits: credits ? parseInt(credits) : 5, semester: sem, moduleType: 'lecture' });
+        const category = getCategoryAt(pos); // 'core' | 'elective' | null
+
+        mods.push({ code, name, credits: credits ? parseInt(credits) : 5, semester: sem, moduleType: 'lecture', category });
     }
 
     return mods;
