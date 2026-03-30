@@ -720,12 +720,16 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     );
 }
 
-function RewardsPanel({ completedTasks, weeklyGoalTarget, weeklyStreak, accent, light, onClose, ambient }) {
-    const progress = Math.min(completedTasks / weeklyGoalTarget, 1);
-    const remaining = Math.max(weeklyGoalTarget - completedTasks, 0);
+function RewardsPanel({ weeklyGoalCategory, setWeeklyGoalCategory, weeklyGoalTarget, setWeeklyGoalTarget, weeklyGoalProgress, weeklyGoalLabel, weeklyGoalHelper, weeklyStreak, accent, light, onClose, ambient }) {
+    const progress = weeklyGoalTarget > 0 ? Math.min(weeklyGoalProgress / weeklyGoalTarget, 1) : 0;
+    const remaining = Math.max(weeklyGoalTarget - weeklyGoalProgress, 0);
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     const tx = light ? "#2d3436" : "#fff";
-    const rewardStatus = progress >= 1 ? "Weekly goal achieved" : remaining === 1 ? "1 task left" : `${remaining} tasks left`;
+    const goalOptions = [
+        { value: "tasks", label: "Tasks completed" },
+        { value: "events", label: "Events planned" },
+        { value: "study", label: "Study streak" },
+    ];
     const rewardSubtext = progress >= 1 ? "Reward unlocked ✦" : progress >= 0.6 ? "On track this week" : "Keep building momentum";
 
     return (
@@ -733,7 +737,7 @@ function RewardsPanel({ completedTasks, weeklyGoalTarget, weeklyStreak, accent, 
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
                 <div>
                     <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 1.2, textTransform: "uppercase" }}>Weekly goal</div>
-                    <div style={{ marginTop: 4, fontSize: 26, fontWeight: 700, color: tx, fontFamily: "'JetBrains Mono'" }}>{completedTasks}/{weeklyGoalTarget}</div>
+                    <div style={{ marginTop: 4, fontSize: 26, fontWeight: 700, color: tx, fontFamily: "'JetBrains Mono'" }}>{weeklyGoalProgress}/{weeklyGoalTarget}</div>
                     <div style={{ marginTop: 3, fontSize: 9, color: progress >= 1 ? "#f59e0b" : progress >= 0.6 ? "#34d399" : txm, fontFamily: "'JetBrains Mono'" }}>{rewardSubtext}</div>
                 </div>
                 <div style={{ minWidth: 62, textAlign: "right" }}>
@@ -741,15 +745,22 @@ function RewardsPanel({ completedTasks, weeklyGoalTarget, weeklyStreak, accent, 
                     <div style={{ marginTop: 4, fontSize: 20, fontWeight: 700, color: "#f59e0b", fontFamily: "'JetBrains Mono'" }}>{weeklyStreak}w</div>
                 </div>
             </div>
+            <div style={{ marginTop: 12, display: "flex", gap: 6 }} data-nodrag>
+                <select value={weeklyGoalCategory} onChange={e => setWeeklyGoalCategory(e.target.value)} style={{ flex: 1, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.05)", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 6, fontSize: 9, color: tx, outline: "none", padding: "4px 6px", backgroundColor: "#000000" }}>
+                    {goalOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                </select>
+                <input type="number" min="1" value={weeklyGoalTarget} onChange={e => setWeeklyGoalTarget(Math.max(1, Number(e.target.value) || 1))} style={{ width: 58, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.05)", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 6, padding: "4px 6px", fontSize: 9, color: tx, outline: "none", fontFamily: "'JetBrains Mono'" }} />
+            </div>
+            <div style={{ marginTop: 8, fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>{weeklyGoalLabel}</div>
             <div style={{ marginTop: 12, height: 8, borderRadius: 999, background: light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.08)", overflow: "hidden" }}>
                 <div style={{ width: `${progress * 100}%`, height: "100%", borderRadius: 999, background: "linear-gradient(90deg,#f59e0b,#fbbf24)", transition: "width 0.3s ease" }} />
             </div>
             <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                <div style={{ fontSize: 10, color: tx }}>{rewardStatus}</div>
+                <div style={{ fontSize: 10, color: tx }}>{weeklyGoalHelper}</div>
                 <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>{Math.round(progress * 100)}%</div>
             </div>
             <div style={{ marginTop: 12, padding: "8px 10px", borderRadius: 8, background: light ? "rgba(245,158,11,0.08)" : "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.18)", fontSize: 10, color: tx, lineHeight: 1.45 }}>
-                {progress >= 1 ? "Nice work — your weekly target is complete." : `Complete ${remaining} more task${remaining === 1 ? "" : "s"} to unlock this week's reward.`}
+                {progress >= 1 ? `Nice work — your ${weeklyGoalLabel.toLowerCase()} target is complete.` : `Complete ${remaining} more to hit your ${weeklyGoalLabel.toLowerCase()} goal.`}
             </div>
         </Panel>
     );
@@ -1392,6 +1403,8 @@ export default function App() {
     ]);
     const [expenses, setExpenses] = useState([{ id: "x1", description: "Coffee ☕", amount: 4.50, category: "food" }, { id: "x2", description: "Bus fare 🚍", amount: 20, category: "transport" }, { id: "x3", description: "Library lunch 🥪", amount: 8.90, category: "food" }]);
     const [budget, setBudgetVal] = useState(500);
+    const [weeklyGoalCategory, setWeeklyGoalCategory] = useState("tasks");
+    const [weeklyGoalTarget, setWeeklyGoalTarget] = useState(5);
     const [input, setInput] = useState(""), [loading, setLoading] = useState(false);
     const [lennyMood, setLennyMood] = useState("neutral");
     const [msgs, setMsgs] = useState([{ role: "assistant", text: `Ready! (${LLM_CONFIG.mode === "local" ? "local LLM" : "API"})\n\n• "make it cozy"\n• "check off documentation"\n• "meeting this friday 2pm"\n• "I spent €12 on lunch"\n• "focus mode"` }]);
@@ -1577,17 +1590,23 @@ export default function App() {
     const weeklySpend = expenses.reduce((s, e) => s + e.amount, 0);
     const budgetProgress = budget > 0 ? Math.min(100, Math.round((weeklySpend / budget) * 100)) : 0;
     const studyStreak = Math.min(7, Math.max(1, activeTasks + completedTasks));
-    const weeklyGoalTarget = 5;
-    const weeklyGoalProgress = Math.min(completedTasks, weeklyGoalTarget);
+    const weeklyGoalSources = {
+        tasks: { label: "Tasks completed", value: completedTasks, unit: "task" },
+        events: { label: "Events planned", value: upcomingEvents, unit: "event" },
+        study: { label: "Study streak", value: studyStreak, unit: "day" },
+    };
+    const activeWeeklyGoal = weeklyGoalSources[weeklyGoalCategory] || weeklyGoalSources.tasks;
+    const weeklyGoalProgress = Math.min(activeWeeklyGoal.value, weeklyGoalTarget);
     const weeklyGoalMet = weeklyGoalProgress >= weeklyGoalTarget;
-    const weeklyGoalHelper = weeklyGoalMet ? "Reward unlocked" : weeklyGoalTarget - weeklyGoalProgress === 1 ? "1 task left" : `${weeklyGoalTarget - weeklyGoalProgress} tasks left`;
+    const weeklyGoalRemaining = Math.max(weeklyGoalTarget - weeklyGoalProgress, 0);
+    const weeklyGoalHelper = weeklyGoalMet ? "Reward unlocked" : weeklyGoalRemaining === 1 ? `1 ${activeWeeklyGoal.unit} left` : `${weeklyGoalRemaining} ${activeWeeklyGoal.unit}s left`;
     const totalModuleCredits = modules.reduce((s, m) => s + (m.credits || 5), 0);
     const statCards = [
         { label: "Active tasks", value: activeTasks, helper: activeTasks <= 2 ? "On track" : "Busy week" },
         { label: "Upcoming events", value: upcomingEvents, helper: upcomingEvents > 0 ? "Plan ahead" : "Clear calendar" },
         { label: "Budget used", value: `${budgetProgress}%`, helper: budgetProgress >= 70 ? "Watch spend" : "On track" },
         { label: "Study streak", value: `${studyStreak}d`, helper: studyStreak >= 5 ? "Building rhythm" : "Momentum" },
-        { label: "Weekly goal", value: `${weeklyGoalProgress}/${weeklyGoalTarget}`, helper: weeklyGoalHelper },
+        { label: activeWeeklyGoal.label, value: `${weeklyGoalProgress}/${weeklyGoalTarget}`, helper: weeklyGoalHelper },
         { label: "Modules", value: modules.length > 0 ? `${modules.length}` : "—", helper: modules.length > 0 ? `${totalModuleCredits} ECTS` : "Add via 🎓" },
     ];
     const quickThemes = [
@@ -1749,7 +1768,7 @@ export default function App() {
                 {showTasks && <TasksPanel tasks={tasks} onToggle={id => setTasks(t => t.map(tk => tk.id === id ? { ...tk, done: !tk.done } : tk))} onEditTask={(id, v) => setTasks(t => t.map(tk => tk.id === id ? { ...tk, text: v } : tk))} onRequestSplit={t => send(`split the task "${t}" into subtasks`)} onAddTask={manualAddTask} accent={accent} light={light} onClose={() => setShowTasks(false)} ambient={ambient} />}
                 {showCal && <CalendarPanel events={events} onDeleteEvent={id => setEvents(e => e.filter(ev => ev.id !== id))} onAddEvent={manualAddEvent} accent={accent} light={light} onClose={() => setShowCal(false)} ambient={ambient} />}
                 {showBudget && <BudgetPanel expenses={expenses} budget={budget} accent={accent} light={light} onClose={() => setShowBudget(false)} onDeleteExpense={id => setExpenses(e => e.filter(ex => ex.id !== id))} onAddExpense={manualAddExpense} ambient={ambient} />}
-                {showRewards && <RewardsPanel completedTasks={completedTasks} weeklyGoalTarget={weeklyGoalTarget} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" />}
+                {showRewards && <RewardsPanel weeklyGoalCategory={weeklyGoalCategory} setWeeklyGoalCategory={setWeeklyGoalCategory} weeklyGoalTarget={weeklyGoalTarget} setWeeklyGoalTarget={setWeeklyGoalTarget} weeklyGoalProgress={weeklyGoalProgress} weeklyGoalLabel={activeWeeklyGoal.label} weeklyGoalHelper={weeklyGoalHelper} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" />}
                 {showWeather && <WeatherWidget light={light} accent={accent} ambient={ambient} onClose={() => setShowWeather(false)} />}
                 {showTCDModules && <TCDModulesPanel modules={modules} tcdDegree={tcdDegree} onSetDegree={setTcdDegree} onAddModule={m => setModules(p => p.some(x => x.code === m.code) ? p : [...p, m])} onRemoveModule={id => setModules(p => p.filter(m => m.id !== id))} accent={accent} light={light} onClose={() => setShowTCDModules(false)} ambient={ambient} />}
                 {showTimetable && <TimetablePanel modules={modules} timetable={timetable} onAddSlot={s => setTimetable(p => [...p, s])} onRemoveSlot={id => setTimetable(p => p.filter(s => s.id !== id))} accent={accent} light={light} onClose={() => setShowTimetable(false)} ambient={ambient} />}
