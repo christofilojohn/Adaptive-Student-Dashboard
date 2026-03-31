@@ -705,7 +705,6 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     // Weekly calculations
     const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0,0,0,0);
     const startOfLastWeek = new Date(startOfWeek); startOfLastWeek.setDate(startOfWeek.getDate() - 7);
-    const endOfLastWeek = new Date(startOfWeek); endOfLastWeek.setMilliseconds(-1);
     
     const thisWeekExpenses = expenses.filter(e => parseLocalDate(e.date) >= startOfWeek);
     const lastWeekExpenses = expenses.filter(e => { const d = parseLocalDate(e.date); return d >= startOfLastWeek && d < startOfWeek; });
@@ -716,7 +715,6 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     // Monthly calculations
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfLastMonth = new Date(startOfMonth.getFullYear(), startOfMonth.getMonth() - 1, 1);
-    const endOfLastMonth = new Date(startOfMonth.getTime() - 1);
     
     const thisMonthExpenses = expenses.filter(e => parseLocalDate(e.date) >= startOfMonth);
     const lastMonthExpenses = expenses.filter(e => { const d = parseLocalDate(e.date); return d >= startOfLastMonth && d < startOfMonth; });
@@ -906,7 +904,7 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
                             <span style={{ fontSize: 14 }}>{catI[topCategory[0]]}</span>
                             <div style={{ flex: 1 }}>
                                 <div style={{ fontSize: 10, color: tx, textTransform: "capitalize" }}>{topCategory[0]}</div>
-                                <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>€{topCategory[1].toFixed(2)} ({thisWeekTotal > 0 ? ((topCategory[1] / thisWeekTotal) * 100).toFixed(0) : 0}%)</div>
+                                <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>€{topCategory[1].toFixed(2)} ({periodTotal > 0 ? ((topCategory[1] / periodTotal) * 100).toFixed(0) : 0}%)</div>
                             </div>
                         </div>
                     </div>
