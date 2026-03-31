@@ -1186,8 +1186,12 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     // Weekly calculations
     const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0,0,0,0);
     const startOfLastWeek = new Date(startOfWeek); startOfLastWeek.setDate(startOfWeek.getDate() - 7);
+    const endOfToday = new Date(today); endOfToday.setHours(23, 59, 59, 999);
     
-    const thisWeekExpenses = expenses.filter(e => parseLocalDate(e.date) >= startOfWeek);
+    const thisWeekExpenses = expenses.filter(e => {
+        const d = parseLocalDate(e.date);
+        return d >= startOfWeek && d <= endOfToday;
+    });
     const lastWeekExpenses = expenses.filter(e => { const d = parseLocalDate(e.date); return d >= startOfLastWeek && d < startOfWeek; });
     const thisWeekTotal = thisWeekExpenses.reduce((s, e) => s + e.amount, 0);
     const lastWeekTotal = lastWeekExpenses.reduce((s, e) => s + e.amount, 0);
@@ -1197,7 +1201,10 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfLastMonth = new Date(startOfMonth.getFullYear(), startOfMonth.getMonth() - 1, 1);
     
-    const thisMonthExpenses = expenses.filter(e => parseLocalDate(e.date) >= startOfMonth);
+    const thisMonthExpenses = expenses.filter(e => {
+        const d = parseLocalDate(e.date);
+        return d >= startOfMonth && d <= endOfToday;
+    });
     const lastMonthExpenses = expenses.filter(e => { const d = parseLocalDate(e.date); return d >= startOfLastMonth && d < startOfMonth; });
     const thisMonthTotal = thisMonthExpenses.reduce((s, e) => s + e.amount, 0);
     const lastMonthTotal = lastMonthExpenses.reduce((s, e) => s + e.amount, 0);
@@ -1206,6 +1213,7 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     // Highest spending category (THIS WEEK/MONTH)
     const periodExpenses = insightsPeriod === "weekly" ? thisWeekExpenses : thisMonthExpenses;
     const periodTotal = insightsPeriod === "weekly" ? thisWeekTotal : thisMonthTotal;
+    const periodLabel = insightsPeriod === "weekly" ? "week" : "month";
     const periodCatT = {};
     periodExpenses.forEach(e => { periodCatT[e.category] = (periodCatT[e.category] || 0) + e.amount; });
     const sortedCats = Object.entries(periodCatT).sort((a, b) => b[1] - a[1]);
@@ -1316,9 +1324,9 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
                 {/* Spending Trend */}
                 <div style={{ marginBottom: 10 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                        <span style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>This {insightsPeriod}</span>
+                        <span style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>This {periodLabel}</span>
                         <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: (insightsPeriod === "weekly" ? weeklyChange : monthlyChange) > 0 ? "#e74c3c" : (insightsPeriod === "weekly" ? weeklyChange : monthlyChange) < 0 ? "#00b894" : txm }}>
-                            {(insightsPeriod === "weekly" ? weeklyChange : monthlyChange) > 0 ? "↑" : (insightsPeriod === "weekly" ? weeklyChange : monthlyChange) < 0 ? "↓" : "→"} {(insightsPeriod === "weekly" ? lastWeekTotal : lastMonthTotal) > 0 ? Math.abs(insightsPeriod === "weekly" ? weeklyChange : monthlyChange).toFixed(0) + "%" : "New"} {(insightsPeriod === "weekly" ? lastWeekTotal : lastMonthTotal) > 0 ? "vs last " + insightsPeriod : "data"}
+                            {(insightsPeriod === "weekly" ? weeklyChange : monthlyChange) > 0 ? "↑" : (insightsPeriod === "weekly" ? weeklyChange : monthlyChange) < 0 ? "↓" : "→"} {(insightsPeriod === "weekly" ? lastWeekTotal : lastMonthTotal) > 0 ? Math.abs(insightsPeriod === "weekly" ? weeklyChange : monthlyChange).toFixed(0) + "%" : "New"} {(insightsPeriod === "weekly" ? lastWeekTotal : lastMonthTotal) > 0 ? "vs last " + periodLabel : "data"}
                         </span>
                     </div>
                     {/* Chart - Histogram or Line */}
