@@ -282,14 +282,10 @@ function snapPos(rawX, rawY, thisId, registry, dragRef, minY) {
                 const pushL = (x + w) - ox;
                 const pushD = (oy + oh) - y;
                 const pushU = (y + h) - oy;
-                const minPush = Math.min(pushR, pushL, pushD, pushU);
                 if (minPush === pushR) x = ox + ow;
                 else if (minPush === pushL) x = ox - w;
                 else if (minPush === pushD) y = oy + oh;
-                else y = oy - h;
-            }
-        });
-    }
+                else y = Math.max(minY, oy - h);
 
     return { x, y: Math.max(minY, y) };
 }
