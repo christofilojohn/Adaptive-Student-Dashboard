@@ -1235,19 +1235,7 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
         // Last 30 days of current month + last month
         const startDate = new Date(now);
         startDate.setDate(1);
-        for (let i = 0; i < 30; i++) {
-            const d = new Date(startDate);
-            d.setDate(startDate.getDate() + i);
-            if (d.getMonth() !== startOfMonth.getMonth()) break;
-            const dayTotal = expenses.filter(e => {
-                const ed = parseLocalDate(e.date);
-                return ed.toDateString() === d.toDateString();
-            }).reduce((s, e) => s + e.amount, 0);
-            chartData.push({ label: d.getDate().toString(), amount: dayTotal, date: d });
-        }
-    }
-    const maxChartAmount = Math.max(...chartData.map(d => d.amount), 1);
-    return (
+        for (let i = 0; i < 31; i++) {
         <Panel x={370} y={320} width={250} title="Budget" icon="💰" light={light} onClose={onClose} ambient={ambient} accent={accent}>
             <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 8 }}>
                 <div style={{ position: "relative", width: 48, height: 48, flexShrink: 0 }}>
