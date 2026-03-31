@@ -651,7 +651,10 @@ function CalendarPanel({ events, onDeleteEvent, onAddEvent, accent, light, onClo
 
 function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense, onAddExpense, ambient }) {
     const [showForm, setShowForm] = useState(false);
+    const [showInsights, setShowInsights] = useState(false);
     const [desc, setDesc] = useState(""), [amt, setAmt] = useState(""), [cat, setCat] = useState("other");
+    const [error, setError] = useState("");
+    const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split('T')[0]);
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     const tx = light ? "#2d3436" : "#fff";
     const total = expenses.reduce((s, e) => s + e.amount, 0);
@@ -660,8 +663,70 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     const catI = { food: "🍽️", transport: "🚗", entertainment: "🎬", shopping: "🛍️", bills: "📄", health: "💊", other: "📦" };
     const catC = { food: "#e17055", transport: "#0984e3", entertainment: "#6c5ce7", shopping: "#fdcb6e", bills: "#636e72", health: "#00b894", other: "#b2bec3" };
     const catT = {}; expenses.forEach(e => { catT[e.category] = (catT[e.category] || 0) + e.amount; });
-    const submit = () => { if (!desc.trim() || !amt || parseFloat(amt) <= 0) return; onAddExpense(desc.trim(), parseFloat(amt), cat); setDesc(""); setAmt(""); setShowForm(false); };
+    const submit = () => { 
+        setError("");
+        const descTrimmed = desc.trim();
+        const amtNum = parseFloat(amt);
+        
+        if (!descTrimmed) {
+            setError("Add a description");
+            return;
+        }
+        if (!amt || isNaN(amtNum)) {
+            setError("Enter an amount");
+            return;
+        }
+        if (amtNum <= 0) {
+            setError("Amount must be > 0");
+            return;
+        }
+        
+        onAddExpense(descTrimmed, amtNum, cat, expenseDate);
+        setDesc("");
+        setAmt("");
+        setExpenseDate(new Date().toISOString().split('T')[0]);
+        setError("");
+        setShowForm(false);
+    };
 
+    // Budget Insights Calculations
+    const now = new Date();
+    const today = new Date();
+    // Helper to parse date string as local date (not UTC)
+    const parseLocalDate = (dateStr) => {
+        if (!dateStr) return new Date();
+        // Handle both YYYY-MM-DD and ISO format
+        const datePart = typeof dateStr === 'string' ? dateStr.split('T')[0] : dateStr;
+        const [year, month, day] = datePart.split('-').map(Number);
+        return new Date(year, month - 1, day);
+    };
+    const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0,0,0,0);
+    const startOfLastWeek = new Date(startOfWeek); startOfLastWeek.setDate(startOfWeek.getDate() - 7);
+    const endOfLastWeek = new Date(startOfWeek); endOfLastWeek.setMilliseconds(-1);
+    
+    const thisWeekExpenses = expenses.filter(e => parseLocalDate(e.date) >= startOfWeek);
+    const lastWeekExpenses = expenses.filter(e => { const d = parseLocalDate(e.date); return d >= startOfLastWeek && d < startOfWeek; });
+    const thisWeekTotal = thisWeekExpenses.reduce((s, e) => s + e.amount, 0);
+    const lastWeekTotal = lastWeekExpenses.reduce((s, e) => s + e.amount, 0);
+    const weeklyChange = lastWeekTotal > 0 ? ((thisWeekTotal - lastWeekTotal) / lastWeekTotal * 100) : 0;
+    
+    // Highest spending category (THIS WEEK ONLY)
+    const weekCatT = {};
+    thisWeekExpenses.forEach(e => { weekCatT[e.category] = (weekCatT[e.category] || 0) + e.amount; });
+    const sortedCats = Object.entries(weekCatT).sort((a, b) => b[1] - a[1]);
+    const topCategory = sortedCats[0];
+    
+    // Daily spending for last 7 days (for mini chart)
+    const dailySpending = [];
+    for (let i = 6; i >= 0; i--) {
+        const d = new Date(now); d.setDate(now.getDate() - i); d.setHours(0,0,0,0);
+        const dayTotal = expenses.filter(e => {
+            const ed = parseLocalDate(e.date);
+            return ed.toDateString() === d.toDateString();
+        }).reduce((s, e) => s + e.amount, 0);
+        dailySpending.push({ day: d.toLocaleDateString('en', { weekday: 'narrow' }), amount: dayTotal });
+    }
+    const maxDaily = Math.max(...dailySpending.map(d => d.amount), 1);
     return (
         <Panel x={370} y={320} width={250} title="Budget" icon="💰" light={light} onClose={onClose} ambient={ambient} accent={accent}>
             <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 8 }}>
@@ -692,12 +757,16 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
                 {expenses.length === 0 && <div style={{ fontSize: 10, color: txm, fontStyle: "italic" }}>No expenses</div>}
                 {[...expenses].reverse().slice(0, 6).map(ex => {
                     const em = guessEmoji(ex.description);
+                    const expenseDate = parseLocalDate(ex.date);
+                    const dateStr = expenseDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                    const isToday = expenseDate.toDateString() === today.toDateString();
                     return (
                         <div key={ex.id} style={{ display: "flex", alignItems: "center", gap: 5, padding: "2px 0", borderBottom: `1px solid ${light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.03)"}` }}>
                             <span style={{ fontSize: 9 }}>{catI[ex.category]}</span>
                             <span style={{ flex: 1, fontSize: 10, color: tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                 {ex.description} {em && <span style={{ fontSize: 9 }}>{em}</span>}
                             </span>
+                            <span style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'" }}>{isToday ? "Today" : dateStr}</span>
                             <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: txm, flexShrink: 0 }}>€{ex.amount.toFixed(2)}</span>
                             <button onClick={() => onDeleteExpense(ex.id)} style={{ background: "none", border: "none", color: txm, cursor: "pointer", fontSize: 9, lineHeight: 1, padding: 0 }}>×</button>
                         </div>)
@@ -705,15 +774,73 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
             </div>
             <div style={{ display: "flex", gap: 3, marginTop: 6 }}>
                 <button onClick={() => setShowForm(f => !f)} style={{ flex: 1, padding: "3px 0", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: `${accent}15`, border: `1px solid ${accent}33`, color: accent }}>{showForm ? "Cancel" : "+ Expense"}</button>
+                <button onClick={() => setShowInsights(i => !i)} style={{ padding: "3px 8px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: light ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.08)", border: `1px solid ${light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`, color: tx }}>{showInsights ? "Hide" : "Insights"}</button>
             </div>
             {showForm && <div className="anim-panel" style={{ marginTop: 5, padding: 6, borderRadius: 6, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)" }} data-nodrag>
-                <input value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description" style={{ width: "100%", background: "transparent", border: "none", outline: "none", fontSize: 10, color: tx, marginBottom: 4 }} />
-                <div style={{ display: "flex", gap: 3 }}>
-                    <input value={amt} onChange={e => setAmt(e.target.value)} placeholder="€" type="number" step="0.01" style={{ width: 55, background: "transparent", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, outline: "none" }} />
+                <input value={desc} onChange={e => { setDesc(e.target.value); setError(""); }} placeholder="Description" style={{ width: "100%", background: "transparent", border: "none", outline: "none", fontSize: 10, color: tx, marginBottom: 4 }} />
+                <div style={{ display: "flex", gap: 3, marginBottom: 3 }}>
+                    <input value={amt} onChange={e => { setAmt(e.target.value); setError(""); }} placeholder="€" type="number" step="0.01" style={{ width: 45, background: "transparent", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, outline: "none" }} />
                     <select value={cat} onChange={e => setCat(e.target.value)} style={{ flex: 1, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.05)", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 4, fontSize: 9, color: tx, outline: "none", padding: "2px" }}>
                         {Object.keys(catI).map(c => <option key={c} value={c}>{catI[c]} {c}</option>)}
                     </select>
                     <button onClick={submit} style={{ background: `${accent}22`, border: `1px solid ${accent}44`, borderRadius: 4, padding: "2px 6px", fontSize: 10, cursor: "pointer", color: accent }}>+</button>
+                </div>
+                <input type="date" value={expenseDate} onChange={e => { setExpenseDate(e.target.value); setError(""); }} style={{ width: "100%", background: "transparent", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, outline: "none", marginBottom: error ? 3 : 0 }} />
+                {error && <div style={{ fontSize: 8, color: "#e74c3c", fontFamily: "'JetBrains Mono'" }}>{error}</div>}
+            </div>}
+            {showInsights && expenses.length > 0 && <div className="anim-panel" style={{ marginTop: 6, padding: 8, borderRadius: 6, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.05)", border: `1px solid ${light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.08)"}` }}>
+                {/* Weekly Trend */}
+                <div style={{ marginBottom: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <span style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>This week</span>
+                        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: weeklyChange > 0 ? "#e74c3c" : weeklyChange < 0 ? "#00b894" : txm }}>
+                            {weeklyChange > 0 ? "↑" : weeklyChange < 0 ? "↓" : "→"} {lastWeekTotal > 0 ? Math.abs(weeklyChange).toFixed(0) + "%" : "New"} {lastWeekTotal > 0 ? "vs last week" : "data"}
+                        </span>
+                    </div>
+                    {/* Mini bar chart */}
+                    <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 32, padding: "4px 0" }}>
+                        {dailySpending.map((d, i) => (
+                            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                                <div style={{ 
+                                    width: "100%", 
+                                    height: `${Math.max((d.amount / maxDaily) * 20, 2)}px`, 
+                                    background: d.amount === maxDaily ? accent : light ? "rgba(0,0,0,0.2)" : "rgba(255,255,255,0.3)",
+                                    borderRadius: 2,
+                                    transition: "all 0.3s"
+                                }} />
+                                <span style={{ fontSize: 7, color: txm }}>{d.day}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                
+                {/* Top Category */}
+                {topCategory && (
+                    <div style={{ marginBottom: 10, padding: "6px 8px", borderRadius: 5, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)" }}>
+                        <div style={{ fontSize: 8, color: txm, marginBottom: 2 }}>Top spending</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 14 }}>{catI[topCategory[0]]}</span>
+                            <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 10, color: tx, textTransform: "capitalize" }}>{topCategory[0]}</div>
+                                <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>€{topCategory[1].toFixed(2)} ({thisWeekTotal > 0 ? ((topCategory[1] / thisWeekTotal) * 100).toFixed(0) : 0}%)</div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+                
+                {/* Budget Status */}
+                <div style={{ padding: "6px 8px", borderRadius: 5, background: pct >= 0.9 ? "rgba(231,76,60,0.1)" : pct >= 0.7 ? "rgba(245,158,11,0.1)" : "rgba(0,184,148,0.1)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 12 }}>{pct >= 0.9 ? "⚠️" : pct >= 0.7 ? "⚡" : "✅"}</span>
+                        <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 9, color: tx, fontWeight: 600 }}>
+                                {pct >= 0.9 ? "Over budget limit" : pct >= 0.7 ? "Approaching limit" : "On track"}
+                            </div>
+                            <div style={{ fontSize: 8, color: txm }}>
+                                {pct >= 0.9 ? "Consider reducing expenses" : pct >= 0.7 ? `${(remaining).toFixed(0)}€ remaining` : "Keep up the good work!"}
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>}
         </Panel>
@@ -1401,7 +1528,11 @@ export default function App() {
         { id: "e1", title: "Lecture block 📚", date: new Date().toISOString().split("T")[0], time: "10:00", duration: 60, color: "#6c5ce7" },
         { id: "e2", title: "Team checkpoint 👥", date: (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split("T")[0]; })(), time: "15:00", duration: 45, color: "#00cec9" },
     ]);
-    const [expenses, setExpenses] = useState([{ id: "x1", description: "Coffee ☕", amount: 4.50, category: "food" }, { id: "x2", description: "Bus fare 🚍", amount: 20, category: "transport" }, { id: "x3", description: "Library lunch 🥪", amount: 8.90, category: "food" }]);
+    const [expenses, setExpenses] = useState([
+        { id: "x1", description: "Coffee ☕", amount: 4.50, category: "food", date: new Date().toISOString() },
+        { id: "x2", description: "Bus fare 🚍", amount: 20, category: "transport", date: new Date(Date.now() - 86400000).toISOString() },
+        { id: "x3", description: "Library lunch 🥪", amount: 8.90, category: "food", date: new Date(Date.now() - 172800000).toISOString() }
+    ]);
     const [budget, setBudgetVal] = useState(500);
     const [weeklyGoalCategory, setWeeklyGoalCategory] = useState("tasks");
     const [weeklyGoalTarget, setWeeklyGoalTarget] = useState(5);
@@ -1463,8 +1594,9 @@ export default function App() {
             if (safe.length) exec(safe);
         });
     };
-    const manualAddExpense = (desc, amount, category) => {
-        setExpenses(p => [...p, { id: gid(), description: desc, amount, category }]);
+    const manualAddExpense = (desc, amount, category, date) => {
+        const expenseDate = date || new Date().toISOString().split('T')[0];
+        setExpenses(p => [...p, { id: gid(), description: desc, amount: parseFloat(amount), category, date: expenseDate }]);
     };
 
     const exec = (actions) => {
@@ -1494,7 +1626,7 @@ export default function App() {
             else if (t === "add_widget" && a.widgetType) setWidgets(p => [...p, { id: gid(), type: a.widgetType }]);
             else if (t === "add_event") setEvents(p => [...p, { id: gid(), title: a.title || "Event", date: a.date || new Date().toISOString().split("T")[0], time: a.time || "09:00", duration: Number(a.duration) || 60, color: a.color || "#6c5ce7" }]);
             else if (t === "delete_event" && a.title) setEvents(p => p.filter(e => !String(e.title).toLowerCase().includes(String(a.title).toLowerCase())));
-            else if (t === "add_expense") setExpenses(p => [...p, { id: gid(), description: a.description || "Expense", amount: Number(a.amount) || 0, category: a.category || "other" }]);
+            else if (t === "add_expense") setExpenses(p => [...p, { id: gid(), description: a.description || "Expense", amount: Number(a.amount) || 0, category: a.category || "other", date: new Date().toISOString() }]);
             else if (t === "add_note") setPostits(p => {
                 const pos = getNextPostitPosition(p.length);
                 return [
