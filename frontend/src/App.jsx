@@ -1,17 +1,28 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, createContext, useContext } from "react";
 
 // ═══════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════
 const LLM_CONFIG = {
-    mode: "gemini",
-    proxy_url: "/api/llm",
+    mode: "local",
+    local_url: "/v1/chat/completions",
+    local_model: "phi-3.5-mini-instruct",
 };
 const POSTIT_CHAR_LIMIT = 120;
 const TASK_CHAR_LIMIT = 80;
 
 // ═══════════════════════════════════════════════════
-//  Hardcoded EMOJI GUESSER
+// TCD CONSTANTS
+// ═══════════════════════════════════════════════════
+const TCD_SEMESTERS = { michaelmas: "Michaelmas", hilary: "Hilary", trinity: "Trinity Term", yearlong: "Year-Long" };
+const TCD_SEMESTER_COLORS = { michaelmas: "#e17055", hilary: "#00cec9", trinity: "#00b894", yearlong: "#6c5ce7" };
+const MODULE_COLORS = ["#6c5ce7", "#00cec9", "#e17055", "#00b894", "#fdcb6e", "#e84393", "#a29bfe", "#74b9ff", "#55efc4", "#ff7675"];
+const TIMETABLE_HOURS = Array.from({ length: 13 }, (_, i) => `${(i + 8).toString().padStart(2, "0")}:00`);
+const WEEK_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday"];
+const WEEK_DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+
+// ═══════════════════════════════════════════════════
+// SMART EMOJI GUESSER
 // ═══════════════════════════════════════════════════
 const HAS_EMOJI = /[\p{Emoji_Presentation}\p{Extended_Pictographic}]/u;
 const EMOJI_MAP = [
@@ -89,6 +100,7 @@ ACTIONS you can use:
 {"type":"delete_task","text":"milk"}
 {"type":"split_task","text":"report","subtasks":["Research 🔍","Write draft ✍️","Edit 📝"]}
 {"type":"add_postit","content":"Remember this","color":"#fef68a","x":200,"y":100}
+{"type":"add_note","content":"Remember this","color":"#fef68a"}
 {"type":"add_event","title":"Meeting 📞","date":"2026-02-16","time":"14:00","duration":60,"color":"#6c5ce7"}
 {"type":"delete_event","title":"meeting"}
 {"type":"add_expense","description":"Coffee ☕","amount":4.50,"category":"food"}
@@ -101,12 +113,20 @@ ACTIONS you can use:
 {"type":"adjust_ambient","glowColor":"#e17055","glowIntensity":0.12,"borderWarmth":0.7,"particles":"fireflies","mood":"cozy"}
 {"type":"change_bg","color":"#1a1a2e"}
 {"type":"clear_canvas"}
+{"type":"add_module","code":"CS3012","name":"Software Engineering 💻","credits":5,"semester":"michaelmas","moduleType":"lecture"}
+{"type":"remove_module","code":"CS3012"}
+{"type":"show_tcd_modules"}
+{"type":"show_timetable"}
+{"type":"add_timetable_slot","moduleCode":"CS3012","day":"monday","startTime":"09:00","endTime":"10:00","slotType":"lecture","room":"Lloyd 1"}
 
 split_task KEEPS the parent and adds subtasks below it.
 adjust_ambient: particles=none|fireflies|stars|rain|sparkle. Use ONLY for emotional content.
 Themes: cozy, focus, ocean, sunset, forest, midnight, minimal
 Priority: high, medium, low
 Categories: food, transport, entertainment, shopping, bills, health, other
+Module semesters: michaelmas, hilary, trinity, yearlong
+Module types: lecture, tutorial, lab, seminar
+TCD year names: Junior Freshman (1), Senior Freshman (2), Junior Sophister (3), Senior Sophister (4)
 
 FORMAT: {"actions":[...],"reply":"short message"}
 
@@ -125,7 +145,7 @@ User: Trip to Ireland next week
 
 RULES:
 - Extract ACTUAL content. Analyze the deep context (e.g., countries, brands, emotional tone, specific activities) and ALWAYS append ONE fitting, standard Unicode emoji to the end of the text/title.
-- CRITICAL EMOJI RULE: Use STRICTLY valid standard Unicode emojis. NEVER mix regional indicator letters with text (e.g., correctly output "Visit Ireland 🇮🇪", NEVER output "Visit Ireland 🇮reland").
+- CRITICAL EMOJI RULE: Use STRICTLY valid standard Unicode emojis. NEVER mix regional indicator letters with text (e.g., correctly output "Visit Ireland 🇮🇪", NEVER output "Visit Ireland 🇮reland"). 
 - Recognize synonyms for completion: "done", "complete", "finish", "check off" all map to "complete_task".
 - Use DATE REFERENCE below to resolve dates accurately.
 - Keep reply under 20 words
@@ -150,13 +170,14 @@ function parseResponse(raw) {
 }
 
 async function fetchLLM(systemPrompt, userMsg, signal, maxTok = 500) {
-    const r = await fetch(LLM_CONFIG.proxy_url, {
-        method: "POST", signal, headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ systemPrompt, userMsg, maxTokens: maxTok })
-    });
-    const data = await r.json();
-    if (data.error) throw new Error(data.error);
-    return data.content || "{}";
+    if (LLM_CONFIG.mode === "local") {
+        const r = await fetch(LLM_CONFIG.local_url, {
+            method: "POST", signal, headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: LLM_CONFIG.local_model, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMsg }], temperature: 0.3, max_tokens: maxTok, response_format: { type: "json_object" } })
+        });
+        if (!r.ok) throw new Error(`LLM server error: ${r.status} ${r.statusText}`);
+        return (await r.json()).choices?.[0]?.message?.content || "{}";
+    }
 }
 
 async function callLLM(msg, state) {
@@ -166,20 +187,13 @@ async function callLLM(msg, state) {
     try {
         const raw = await fetchLLM(full, msg, chatCtrl.signal, 500);
         chatCtrl = null;
-        console.log("[LLM raw]", raw);
         const parsed = parseResponse(raw);
-        console.log("[LLM parsed]", parsed);
-        if (parsed && (parsed.actions.length > 0 || parsed.reply)) {
-            return { actions: parsed.actions, reply: parsed.reply || "Done! ✨" };
-        }
-        // If we got raw text but couldn't parse actions, show what came back
-        console.warn("[LLM] No actions/reply parsed from:", raw);
+        if (parsed) return { actions: parsed.actions, reply: parsed.reply || "Done! ✨" };
         return { actions: [], reply: "Done! ✨" };
     } catch (e) {
         chatCtrl = null;
-        console.error("[LLM error]", e);
         if (e?.name === "AbortError") return { actions: [], reply: "" };
-        return { actions: [], reply: `Error: ${e.message}` };
+        return { actions: [], reply: "Couldn't process that — try rephrasing?" };
     }
 }
 
@@ -200,13 +214,21 @@ async function callAmbientLLM(contextMsg) {
 // ═══════════════════════════════════════════════════
 // HOOKS & HELPERS
 // ═══════════════════════════════════════════════════
+// Shared context so every draggable knows how tall the locked header area is
+const HeaderLockCtx = createContext(0);
+
 function useDraggable(ix, iy) {
-    const [pos, setPos] = useState({ x: ix, y: iy });
+    const minY = useContext(HeaderLockCtx);
+    const minYRef = useRef(minY);
+    useEffect(() => { minYRef.current = minY; }, [minY]);
+    const [pos, setPos] = useState({ x: ix, y: Math.max(minY, iy) });
     const dr = useRef(false), off = useRef({ x: 0, y: 0 });
     const onMouseDown = useCallback((e) => {
         if (e.target.closest("button, input, textarea, select, a, [data-nodrag]")) return;
         e.preventDefault(); dr.current = true; off.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
-        const mv = ev => { if (dr.current) setPos({ x: ev.clientX - off.current.x, y: ev.clientY - off.current.y }); };
+        const mv = ev => {
+            if (dr.current) setPos({ x: ev.clientX - off.current.x, y: Math.max(minYRef.current, ev.clientY - off.current.y) });
+        };
         const up = () => { dr.current = false; window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
         window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
     }, [pos.x, pos.y]);
@@ -315,7 +337,7 @@ const MOOD_RULES = [
     { mood: "intense",    pattern: /\b(intense|serious|critical|important|power|determined|no excuses|push)\b/i },
     { mood: "mysterious",  pattern: /\b(mysteri|dark|midnight|shadow|secret|enigma|noir|spooky)\b/i },
     { mood: "ocean",      pattern: /\b(ocean|sea|water|wave|beach|surf|coast|marine|island)\b/i },
-    { mood: "nature",     pattern: /\b(forest|nature|green|earth|garden|tree|plant|hike|mountain|outdoor|quest)\b/i },
+    { mood: "nature",     pattern: /\b(forest|nature|green|earth|garden|tree|plant|hike|mountain|outdoor)\b/i },
     { mood: "sunset",     pattern: /\b(sunset|sunrise|golden|dusk|twilight|dawn|horizon|sky)\b/i },
     { mood: "dreamy",     pattern: /\b(dream|whimsical|fantasy|magic|wonder|fairy|starry|wish)\b/i },
     { mood: "calm",       pattern: /\b(calm|serene|peaceful|tranquil|zen|meditat|mindful|breathe|quiet)\b/i },
@@ -462,7 +484,7 @@ function PostIt({ id, content, color, initialX, initialY, onRemove, onEdit }) {
             <style>{`@keyframes noteIn_${id}{from{opacity:0;transform:rotate(${rot.current}deg) scale(0.7)}to{opacity:1;transform:rotate(${rot.current}deg) scale(1)}}`}</style>
             <button onClick={e => { e.stopPropagation(); onRemove(id); }} style={{ position: "absolute", top: 3, right: 6, background: "none", border: "none", color: "rgba(0,0,0,0.2)", cursor: "pointer", fontSize: 15, lineHeight: 1 }}>×</button>
             {em && <span style={{ position: "absolute", top: 4, left: 8, fontSize: 13 }}>{em}</span>}
-            <EditableText value={content} onChange={v => onEdit(id, v)} maxLen={POSTIT_CHAR_LIMIT} multiline style={{ fontFamily: "'Caveat', cursive", fontSize: 16, color: "#2d3436", lineHeight: 1.4 }} />
+            <EditableText value={content} onChange={v => onEdit(id, v)} maxLen={POSTIT_CHAR_LIMIT} multiline style={{ fontFamily: "'Caveat', cursive", fontSize: 16, color: "#111111", lineHeight: 1.4 }} />
         </div>
     );
 }
@@ -1111,7 +1133,7 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     const catI = { food: "🍽️", transport: "🚗", entertainment: "🎬", shopping: "🛍️", bills: "📄", health: "💊", other: "📦" };
     const catC = { food: "#e17055", transport: "#0984e3", entertainment: "#6c5ce7", shopping: "#fdcb6e", bills: "#636e72", health: "#00b894", other: "#b2bec3" };
     const catT = {}; expenses.forEach(e => { catT[e.category] = (catT[e.category] || 0) + e.amount; });
-    const submit = () => { if (!desc.trim() || !amt) return; onAddExpense(desc.trim(), parseFloat(amt), cat); setDesc(""); setAmt(""); setShowForm(false); };
+    const submit = () => { if (!desc.trim() || !amt || parseFloat(amt) <= 0) return; onAddExpense(desc.trim(), parseFloat(amt), cat); setDesc(""); setAmt(""); setShowForm(false); };
 
     return (
         <Panel x={370} y={320} width={250} title="Budget" icon="💰" light={light} onClose={onClose} ambient={ambient} accent={accent}>
@@ -1171,12 +1193,16 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     );
 }
 
-function RewardsPanel({ completedTasks, weeklyGoalTarget, weeklyStreak, accent, light, onClose, ambient }) {
-    const progress = Math.min(completedTasks / weeklyGoalTarget, 1);
-    const remaining = Math.max(weeklyGoalTarget - completedTasks, 0);
+function RewardsPanel({ weeklyGoalCategory, setWeeklyGoalCategory, weeklyGoalTarget, setWeeklyGoalTarget, weeklyGoalProgress, weeklyGoalLabel, weeklyGoalHelper, weeklyStreak, accent, light, onClose, ambient }) {
+    const progress = weeklyGoalTarget > 0 ? Math.min(weeklyGoalProgress / weeklyGoalTarget, 1) : 0;
+    const remaining = Math.max(weeklyGoalTarget - weeklyGoalProgress, 0);
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     const tx = light ? "#2d3436" : "#fff";
-    const rewardStatus = progress >= 1 ? "Weekly goal achieved" : remaining === 1 ? "1 task left" : `${remaining} tasks left`;
+    const goalOptions = [
+        { value: "tasks", label: "Tasks completed" },
+        { value: "events", label: "Events planned" },
+        { value: "study", label: "Study streak" },
+    ];
     const rewardSubtext = progress >= 1 ? "Reward unlocked ✦" : progress >= 0.6 ? "On track this week" : "Keep building momentum";
 
     return (
@@ -1184,7 +1210,7 @@ function RewardsPanel({ completedTasks, weeklyGoalTarget, weeklyStreak, accent, 
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
                 <div>
                     <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 1.2, textTransform: "uppercase" }}>Weekly goal</div>
-                    <div style={{ marginTop: 4, fontSize: 26, fontWeight: 700, color: tx, fontFamily: "'JetBrains Mono'" }}>{completedTasks}/{weeklyGoalTarget}</div>
+                    <div style={{ marginTop: 4, fontSize: 26, fontWeight: 700, color: tx, fontFamily: "'JetBrains Mono'" }}>{weeklyGoalProgress}/{weeklyGoalTarget}</div>
                     <div style={{ marginTop: 3, fontSize: 9, color: progress >= 1 ? "#f59e0b" : progress >= 0.6 ? "#34d399" : txm, fontFamily: "'JetBrains Mono'" }}>{rewardSubtext}</div>
                 </div>
                 <div style={{ minWidth: 62, textAlign: "right" }}>
@@ -1192,32 +1218,652 @@ function RewardsPanel({ completedTasks, weeklyGoalTarget, weeklyStreak, accent, 
                     <div style={{ marginTop: 4, fontSize: 20, fontWeight: 700, color: "#f59e0b", fontFamily: "'JetBrains Mono'" }}>{weeklyStreak}w</div>
                 </div>
             </div>
+            <div style={{ marginTop: 12, display: "flex", gap: 6 }} data-nodrag>
+                <select value={weeklyGoalCategory} onChange={e => setWeeklyGoalCategory(e.target.value)} style={{ flex: 1, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.05)", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 6, fontSize: 9, color: tx, outline: "none", padding: "4px 6px", backgroundColor: "#000000" }}>
+                    {goalOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                </select>
+                <input type="number" min="1" value={weeklyGoalTarget} onChange={e => setWeeklyGoalTarget(Math.max(1, Number(e.target.value) || 1))} style={{ width: 58, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.05)", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 6, padding: "4px 6px", fontSize: 9, color: tx, outline: "none", fontFamily: "'JetBrains Mono'" }} />
+            </div>
+            <div style={{ marginTop: 8, fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>{weeklyGoalLabel}</div>
             <div style={{ marginTop: 12, height: 8, borderRadius: 999, background: light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.08)", overflow: "hidden" }}>
                 <div style={{ width: `${progress * 100}%`, height: "100%", borderRadius: 999, background: "linear-gradient(90deg,#f59e0b,#fbbf24)", transition: "width 0.3s ease" }} />
             </div>
             <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                <div style={{ fontSize: 10, color: tx }}>{rewardStatus}</div>
+                <div style={{ fontSize: 10, color: tx }}>{weeklyGoalHelper}</div>
                 <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>{Math.round(progress * 100)}%</div>
             </div>
             <div style={{ marginTop: 12, padding: "8px 10px", borderRadius: 8, background: light ? "rgba(245,158,11,0.08)" : "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.18)", fontSize: 10, color: tx, lineHeight: 1.45 }}>
-                {progress >= 1 ? "Nice work — your weekly target is complete." : `Complete ${remaining} more task${remaining === 1 ? "" : "s"} to unlock this week's reward.`}
+                {progress >= 1 ? `Nice work — your ${weeklyGoalLabel.toLowerCase()} target is complete.` : `Complete ${remaining} more to hit your ${weeklyGoalLabel.toLowerCase()} goal.`}
             </div>
         </Panel>
     );
 }
 
+
+
 function TypingDots() { return <div style={{ display: "flex", gap: 3, padding: "8px 12px", alignSelf: "flex-start" }}>{[0, 1, 2].map(i => <div key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.3)", animation: `bk 1.2s ${i * .15}s infinite ease-in-out` }} />)}</div>; }
+
+// ═══════════════════════════════════════════════════
+// WEATHER WIDGET  (Open-Meteo — free, no API key)
+// ═══════════════════════════════════════════════════
+const WMO_CODES = {
+    0: ["☀️", "Clear sky"], 1: ["🌤️", "Mainly clear"], 2: ["⛅", "Partly cloudy"], 3: ["☁️", "Overcast"],
+    45: ["🌫️", "Fog"], 48: ["🌫️", "Icy fog"],
+    51: ["🌦️", "Light drizzle"], 53: ["🌦️", "Drizzle"], 55: ["🌦️", "Heavy drizzle"],
+    61: ["🌧️", "Light rain"], 63: ["🌧️", "Rain"], 65: ["🌧️", "Heavy rain"],
+    71: ["🌨️", "Light snow"], 73: ["🌨️", "Snow"], 75: ["❄️", "Heavy snow"], 77: ["❄️", "Snow grains"],
+    80: ["🌦️", "Light showers"], 81: ["🌧️", "Showers"], 82: ["🌧️", "Heavy showers"],
+    85: ["🌨️", "Snow showers"], 86: ["❄️", "Heavy snow showers"],
+    95: ["⛈️", "Thunderstorm"], 96: ["⛈️", "Thunderstorm"], 99: ["⛈️", "Thunderstorm"],
+};
+
+function WeatherWidget({ light, accent, ambient, onClose }) {
+    const [query, setQuery] = useState("Dublin");
+    const [editing, setEditing] = useState(false);
+    const [suggestions, setSuggestions] = useState([]);
+    const [selected, setSelected] = useState(null); // { latitude, longitude, name, country_code }
+    const [weather, setWeather] = useState(null);
+    const [fetching, setFetching] = useState(false);
+    const [err, setErr] = useState(null);
+    const inputRef = useRef(null);
+    const tx = light ? "#2d3436" : "#fff";
+    const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
+    const panelBg = light ? "rgba(255,255,255,0.92)" : "rgba(15,15,28,0.92)";
+    const borderCol = light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)";
+
+    // Fetch suggestions as user types
+    useEffect(() => {
+        if (!editing || !query.trim()) { setSuggestions([]); return; }
+        const ctrl = new AbortController();
+        const t = setTimeout(async () => {
+            try {
+                const geo = await fetch(
+                    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query.trim())}&count=5&language=en&format=json`,
+                    { signal: ctrl.signal }
+                ).then(r => r.json());
+                setSuggestions(geo.results ?? []);
+            } catch { /* ignore abort */ }
+        }, 350);
+        return () => { clearTimeout(t); ctrl.abort(); };
+    }, [query, editing]);
+
+    // Fetch weather for the selected location
+    useEffect(() => {
+        if (!selected) return;
+        const ctrl = new AbortController();
+        setFetching(true); setErr(null);
+        fetch(
+            `https://api.open-meteo.com/v1/forecast?latitude=${selected.latitude}&longitude=${selected.longitude}&current=temperature_2m,apparent_temperature,weathercode,wind_speed_10m,relative_humidity_2m&wind_speed_unit=kmh`,
+            { signal: ctrl.signal }
+        ).then(r => { if (!r.ok) throw new Error(`Weather API error: ${r.status}`); return r.json(); }).then(wx => {
+            setWeather({ ...wx.current, name: selected.name, country_code: selected.country_code });
+            setFetching(false);
+        }).catch(e => {
+            if (e.name !== "AbortError") { setErr("Couldn't reach weather service"); setFetching(false); }
+        });
+        return () => ctrl.abort();
+    }, [selected]);
+
+    // Bootstrap on first render
+    useEffect(() => {
+        setSelected({ latitude: 53.3331, longitude: -6.2489, name: "Dublin", country_code: "IE" });
+    }, []);
+
+    function pickSuggestion(s) {
+        setSelected(s);
+        setQuery(s.name);
+        setSuggestions([]);
+        setEditing(false);
+    }
+
+    const [icon, desc] = weather ? (WMO_CODES[weather.weathercode] ?? ["🌡️", "Unknown"]) : ["🌡️", "—"];
+
+    return (
+        <Panel x={645} y={590} width={210} title="Weather" icon="🌤️" onClose={onClose} ambient={ambient} light={light} accent={accent}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+
+                {/* City input + suggestions */}
+                <div style={{ position: "relative" }} data-nodrag>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                        {editing ? (
+                            <input
+                                ref={inputRef}
+                                value={query}
+                                onChange={e => setQuery(e.target.value)}
+                                onBlur={() => setTimeout(() => { setSuggestions([]); setEditing(false); }, 150)}
+                                onKeyDown={e => {
+                                    if (e.key === "Escape") { setQuery(weather?.name ?? query); setSuggestions([]); setEditing(false); }
+                                    if (e.key === "Enter" && suggestions.length) pickSuggestion(suggestions[0]);
+                                }}
+                                autoFocus
+                                style={{
+                                    fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 1.5,
+                                    textTransform: "uppercase", color: accent, background: "transparent",
+                                    border: "none", borderBottom: `1px solid ${accent}55`, outline: "none",
+                                    width: "100%", paddingBottom: 2,
+                                }}
+                            />
+                        ) : (
+                            <button
+                                onClick={() => { setEditing(true); setTimeout(() => inputRef.current?.select(), 10); }}
+                                style={{
+                                    fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 1.5,
+                                    textTransform: "uppercase", color: accent, background: "none",
+                                    border: "none", cursor: "text", padding: 0, textAlign: "left",
+                                }}
+                            >
+                                {weather?.name ?? query}
+                            </button>
+                        )}
+                        {weather && <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: txm, letterSpacing: 1, flexShrink: 0 }}>{weather.country_code?.toUpperCase()}</span>}
+                    </div>
+
+                    {/* Suggestions dropdown */}
+                    {suggestions.length > 0 && (
+                        <div style={{
+                            position: "absolute", top: "100%", left: 0, right: 0, zIndex: 999, marginTop: 4,
+                            background: panelBg, border: `1px solid ${borderCol}`,
+                            borderRadius: 8, overflow: "hidden",
+                            boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+                        }}>
+                            {suggestions.map(s => (
+                                <button
+                                    key={s.id}
+                                    onMouseDown={() => pickSuggestion(s)}
+                                    style={{
+                                        display: "block", width: "100%", textAlign: "left",
+                                        padding: "7px 10px", background: "none", border: "none",
+                                        cursor: "pointer", borderBottom: `1px solid ${borderCol}`,
+                                    }}
+                                    onMouseEnter={e => e.currentTarget.style.background = `${accent}18`}
+                                    onMouseLeave={e => e.currentTarget.style.background = "none"}
+                                >
+                                    <div style={{ fontSize: 11, color: tx, fontWeight: 500 }}>{s.name}</div>
+                                    <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'", marginTop: 1 }}>
+                                        {[s.admin1, s.country].filter(Boolean).join(", ")}
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {fetching && <div style={{ fontSize: 11, color: txm, fontFamily: "'JetBrains Mono'" }}>Fetching…</div>}
+                {err && <div style={{ fontSize: 11, color: "#e17055" }}>{err}</div>}
+
+                {weather && !fetching && <>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <span style={{ fontSize: 34, lineHeight: 1 }}>{icon}</span>
+                        <div>
+                            <div style={{ fontSize: 28, fontWeight: 700, color: tx, lineHeight: 1, fontFamily: "'JetBrains Mono'" }}>{Math.round(weather.temperature_2m)}°</div>
+                            <div style={{ fontSize: 9.5, color: txm, marginTop: 3 }}>Feels like {Math.round(weather.apparent_temperature)}°</div>
+                        </div>
+                    </div>
+                    <div style={{ fontSize: 11, color: tx }}>{desc}</div>
+                    <div style={{ display: "flex", gap: 12 }}>
+                        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: txm }}>💧 {weather.relative_humidity_2m}%</span>
+                        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: txm }}>💨 {Math.round(weather.wind_speed_10m)} km/h</span>
+                    </div>
+                </>}
+
+                <div style={{ fontSize: 7.5, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 0.5, opacity: 0.7 }}>
+                    Tap city to search · Open-Meteo
+                </div>
+            </div>
+        </Panel>
+    );
+}
+
+// ═══════════════════════════════════════════════════
+// TCD SEARCH & PARSER
+// ═══════════════════════════════════════════════════
+async function searchTCDCourse(courseName) {
+    const res = await fetch("/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ q: courseName }),
+    });
+    if (!res.ok) throw new Error(`Search server returned ${res.status} — is it running?`);
+    return res.json();
+}
+
+async function searchTCDDirect(url) {
+    const res = await fetch("/search/tcd-direct", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+    });
+    if (!res.ok) throw new Error(`Search server returned ${res.status}`);
+    return res.json();
+}
+
+// ═══════════════════════════════════════════════════
+// TCD MODULES PANEL
+// ═══════════════════════════════════════════════════
+function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemoveModule, accent, light, onClose, ambient }) {
+    const [searching, setSearching] = useState(false);
+    const [searchStep, setSearchStep] = useState("");
+    const [searchQuery, setSearchQuery] = useState(tcdDegree?.name || "");
+    // urlResults: list of candidate URLs from DDG search
+    const [urlResults, setUrlResults] = useState(null);
+    // moduleResults: parsed modules from a chosen/direct URL
+    const [moduleResults, setModuleResults] = useState(null);
+    const [directUrl, setDirectUrl] = useState("");
+    const [showDirectMode, setShowDirectMode] = useState(false);
+    const [warnAcked, setWarnAcked] = useState(() => sessionStorage.getItem("tcd_search_acked") === "1");
+    const [showWarn, setShowWarn] = useState(false);
+    const [pendingAction, setPendingAction] = useState(null);
+    const [addForm, setAddForm] = useState(false);
+    const [formCode, setFormCode] = useState(""), [formName, setFormName] = useState("");
+    const [formCredits, setFormCredits] = useState("5"), [formSemester, setFormSemester] = useState("michaelmas"), [formType, setFormType] = useState("lecture");
+
+    const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
+    const tx = light ? "#2d3436" : "#fff";
+    const bd = light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.08)";
+    const totalCredits = modules.reduce((s, m) => s + (m.credits || 5), 0);
+    const semGroups = {};
+    modules.forEach(m => { const s = m.semester || "michaelmas"; if (!semGroups[s]) semGroups[s] = []; semGroups[s].push(m); });
+
+    // Stage 1: search DDG → get candidate URLs
+    const runSearch = async () => {
+        if (!searchQuery.trim()) return;
+        setShowWarn(false);
+        setSearching(true);
+        setSearchStep("Searching portal…");
+        setModuleResults(null);
+        try {
+            const data = await searchTCDCourse(searchQuery);
+            setUrlResults({ urls: data.urls || [], query: searchQuery });
+            onSetDegree({ name: searchQuery, college: "Trinity College Dublin" });
+        } catch (err) {
+            setUrlResults({ urls: [], query: searchQuery, error: err.message });
+        }
+        setSearching(false);
+        setSearchStep("");
+    };
+
+    // Stage 2: fetch modules from a chosen URL
+    const runFetchUrl = async (url) => {
+        setSearching(true);
+        setSearchStep("Fetching page…");
+        setUrlResults(null);
+        try {
+            const data = await searchTCDDirect(url);
+            setModuleResults({ parsed: data.modules || [], url });
+        } catch (err) {
+            setModuleResults({ parsed: [], url, error: err.message });
+        }
+        setSearching(false);
+        setSearchStep("");
+    };
+
+    // Direct URL paste (unchanged flow)
+    const runDirect = async () => {
+        if (!directUrl.trim()) return;
+        setShowWarn(false);
+        setSearching(true);
+        setSearchStep("Fetching page…");
+        try {
+            const data = await searchTCDDirect(directUrl.trim());
+            setModuleResults({ parsed: data.modules || [], url: directUrl.trim() });
+        } catch (err) {
+            setModuleResults({ parsed: [], url: directUrl.trim(), error: err.message });
+        }
+        setSearching(false);
+        setSearchStep("");
+    };
+
+    const handleSearchClick = () => {
+        if (!searchQuery.trim()) return;
+        if (warnAcked) { runSearch(); return; }
+        setPendingAction("search");
+        setShowWarn(true);
+    };
+
+    const handleDirectClick = () => {
+        if (!directUrl.trim()) return;
+        if (warnAcked) { runDirect(); return; }
+        setPendingAction("direct");
+        setShowWarn(true);
+    };
+
+    const confirmSearch = () => {
+        sessionStorage.setItem("tcd_search_acked", "1");
+        setWarnAcked(true);
+        const action = pendingAction;
+        setPendingAction(null);
+        if (action === "direct") runDirect(); else runSearch();
+    };
+
+    const addManual = () => {
+        if (!formCode.trim() || !formName.trim()) return;
+        onAddModule({ id: `m${Date.now()}`, code: formCode.trim().toUpperCase(), name: formName.trim(), credits: parseInt(formCredits) || 5, semester: formSemester, moduleType: formType, color: MODULE_COLORS[modules.length % MODULE_COLORS.length] });
+        setFormCode(""); setFormName(""); setFormCredits("5"); setAddForm(false);
+    };
+
+    const importAll = () => {
+        (moduleResults?.parsed || []).forEach((m, i) => onAddModule({ ...m, id: `m${Date.now()}${i}`, color: MODULE_COLORS[(modules.length + i) % MODULE_COLORS.length] }));
+        setModuleResults(null);
+    };
+
+    const selStyle = { background: light ? "rgba(255,255,255,0.8)" : "rgba(30,30,50,0.8)", border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, outline: "none", colorScheme: light ? "light" : "dark" };
+    const inStyle = (extra) => ({ background: "transparent", border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 6px", fontSize: 10, color: tx, outline: "none", fontFamily: "'DM Sans'", ...extra });
+
+    return (
+        <Panel x={650} y={320} width={380} title={`TCD Modules · ${modules.length} registered · ${totalCredits} ECTS`} icon="🎓" light={light} onClose={onClose} ambient={ambient} accent={accent}>
+            {/* Degree search bar */}
+            <div style={{ marginBottom: 8, padding: "8px 10px", borderRadius: 8, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.04)", border: `1px solid ${bd}` }}>
+                {tcdDegree && <div style={{ fontSize: 8, fontFamily: "'JetBrains Mono'", color: accent, marginBottom: 5, letterSpacing: 1 }}>🎓 {tcdDegree.college} · {tcdDegree.name}</div>}
+                {!showDirectMode ? (
+                    <>
+                        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                            <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSearchClick()} placeholder="Search SCSS programmes…" data-nodrag
+                                style={{ flex: 1, background: "transparent", border: "none", outline: "none", fontSize: 11, color: tx, fontFamily: "'DM Sans'", minWidth: 120 }} />
+                            <button onClick={handleSearchClick} disabled={searching} style={{ padding: "3px 9px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, opacity: searching ? 0.6 : 1 }}>
+                                {searching ? searchStep || "…" : "Search"}
+                            </button>
+                        </div>
+                        <div style={{ marginTop: 4, fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'" }}>
+                            Searches the SCSS teaching portal · <button onClick={() => setShowDirectMode(true)} style={{ fontSize: 8, background: "none", border: "none", cursor: "pointer", color: accent, fontFamily: "'JetBrains Mono'", textDecoration: "underline", padding: 0 }}>paste URL for any other course →</button>
+                        </div>
+                    </>
+                ) : (
+                    <>
+                        <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", marginBottom: 4 }}>Paste a module listing page URL from any TCD department</div>
+                        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                            <input value={directUrl} onChange={e => setDirectUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && handleDirectClick()} placeholder="https://…" data-nodrag
+                                style={{ flex: 1, background: "transparent", border: `1px solid ${bd}`, borderRadius: 4, outline: "none", fontSize: 9, color: tx, fontFamily: "'DM Sans'", padding: "3px 6px" }} />
+                            <button onClick={handleDirectClick} disabled={searching} style={{ padding: "3px 9px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, opacity: searching ? 0.6 : 1 }}>
+                                {searching ? searchStep || "…" : "Fetch"}
+                            </button>
+                        </div>
+                        <div style={{ marginTop: 4, fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'" }}>
+                            e.g. <span style={{ cursor: "pointer", color: accent, textDecoration: "underline" }} onClick={() => setDirectUrl("https://teaching.scss.tcd.ie/general-information/scss-modules/")}>scss-modules</span>
+                            {" · "}<button onClick={() => setShowDirectMode(false)} style={{ fontSize: 8, background: "none", border: "none", cursor: "pointer", color: txm, fontFamily: "'JetBrains Mono'", textDecoration: "underline", padding: 0 }}>back to search</button>
+                        </div>
+                    </>
+                )}
+            </div>
+
+            {/* Privacy warning */}
+            {showWarn && (
+                <div className="anim-panel" style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 8, background: light ? "rgba(253,203,110,0.15)" : "rgba(253,203,110,0.1)", border: "1px solid rgba(253,203,110,0.4)" }} data-nodrag>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: "#e67e22", marginBottom: 4, fontFamily: "'JetBrains Mono'" }}>⚠ External search</div>
+                    <div style={{ fontSize: 10, color: tx, lineHeight: 1.5, marginBottom: 8 }}>
+                        {pendingAction === "direct"
+                            ? <>Fetching <strong>{directUrl.slice(0, 50)}{directUrl.length > 50 ? "…" : ""}</strong> will contact that server directly.</>
+                            : <>Searching will fetch the <strong>SCSS teaching portal sitemap</strong> from teaching.scss.tcd.ie.</>
+                        }
+                        {" "}This is the <em>only</em> part of this dashboard that uses an internet connection — everything else runs on-device.
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                        <button onClick={confirmSearch} style={{ flex: 1, padding: "4px", borderRadius: 5, fontSize: 9, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}55`, color: accent, fontFamily: "'JetBrains Mono'" }}>Proceed</button>
+                        <button onClick={() => { setShowWarn(false); setPendingAction(null); }} style={{ padding: "4px 10px", borderRadius: 5, fontSize: 9, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>Cancel</button>
+                    </div>
+                </div>
+            )}
+
+            {/* Stage 1: URL candidates from DDG */}
+            {urlResults && (
+                <div className="anim-panel" style={{ marginBottom: 10, padding: 8, borderRadius: 8, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)", border: `1px solid ${accent}33` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: accent }}>
+                            {urlResults.urls.length > 0 ? `${urlResults.urls.length} pages found — pick the right one` : "No TCD pages found"}
+                        </span>
+                        <button onClick={() => setUrlResults(null)} style={{ padding: "2px 6px", borderRadius: 4, fontSize: 8, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>×</button>
+                    </div>
+                    {urlResults.error && <div style={{ fontSize: 9, color: "#e74c3c", marginBottom: 4 }}>{urlResults.error}</div>}
+                    {urlResults.urls.length === 0 && !urlResults.error && (
+                        <div style={{ fontSize: 10, color: txm, lineHeight: 1.5 }}>
+                            No match in the SCSS portal. For other TCD courses (Philosophy, Law, Business, etc.) find your department's module listing page and use <span style={{ color: accent, cursor: "pointer", textDecoration: "underline" }} onClick={() => { setUrlResults(null); setShowDirectMode(true); }}>paste URL</span>.
+                        </div>
+                    )}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {urlResults.urls.map((r, i) => (
+                            <div key={i} style={{ padding: "5px 7px", borderRadius: 6, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.04)", border: `1px solid ${bd}` }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: 10, color: tx, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.title}</div>
+                                        <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>{r.url.replace(/^https?:\/\//, "")}</div>
+                                    </div>
+                                    <button onClick={() => runFetchUrl(r.url)} style={{ flexShrink: 0, padding: "3px 8px", borderRadius: 4, fontSize: 9, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, fontFamily: "'JetBrains Mono'" }}>
+                                        Load →
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Stage 2: modules from chosen URL */}
+            {moduleResults?.error && <div style={{ marginBottom: 8, padding: "6px 8px", borderRadius: 6, background: "rgba(231,76,60,0.08)", border: "1px solid rgba(231,76,60,0.2)", fontSize: 10, color: "#e74c3c" }}>Failed: {moduleResults.error}</div>}
+            {moduleResults && !moduleResults.error && (() => {
+                const coreMods = moduleResults.parsed.filter(m => m.category === 'core');
+                const electiveMods = moduleResults.parsed.filter(m => m.category === 'elective');
+                const uncategorised = moduleResults.parsed.filter(m => !m.category);
+                const addGroup = (group, offset = 0) => group.forEach((m, i) =>
+                    onAddModule({ ...m, id: `m${Date.now()}${offset+i}`, color: MODULE_COLORS[(modules.length + offset + i) % MODULE_COLORS.length] })
+                );
+                const ModRow = ({ m, i, globalIdx }) => (
+                    <div style={{ display: "flex", gap: 5, alignItems: "center", padding: "2px 0" }}>
+                        <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, fontWeight: 600, color: TCD_SEMESTER_COLORS[m.semester] || accent, minWidth: 60 }}>{m.code}</span>
+                        <span style={{ flex: 1, fontSize: 10, color: tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
+                        <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: txm }}>{m.credits}cr</span>
+                        <button onClick={() => onAddModule({ ...m, id: `m${Date.now()}${globalIdx}`, color: MODULE_COLORS[(modules.length + globalIdx) % MODULE_COLORS.length] })}
+                            style={{ padding: "1px 6px", borderRadius: 3, fontSize: 9, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, lineHeight: 1 }}>+</button>
+                    </div>
+                );
+                const SectionHeader = ({ label, count, onAddAll }) => (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6, marginBottom: 2 }}>
+                        <span style={{ fontSize: 8, fontFamily: "'JetBrains Mono'", letterSpacing: 1, textTransform: "uppercase", color: label === "Core" ? accent : txm }}>{label} · {count}</span>
+                        {onAddAll && <button onClick={onAddAll} style={{ padding: "1px 7px", borderRadius: 3, fontSize: 8, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, fontFamily: "'JetBrains Mono'" }}>Add all {label.toLowerCase()}</button>}
+                    </div>
+                );
+                return (
+                    <div className="anim-panel" style={{ marginBottom: 10, padding: 8, borderRadius: 8, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)", border: `1px solid ${accent}33` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                            <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: accent }}>
+                                {moduleResults.parsed.length > 0 ? `${moduleResults.parsed.length} modules` : "No modules found"}
+                                {coreMods.length > 0 && <span style={{ color: txm }}> · {coreMods.length} core</span>}
+                            </span>
+                            <div style={{ display: "flex", gap: 4 }}>
+                                {moduleResults.parsed.length > 0 && <button onClick={importAll} style={{ padding: "2px 7px", borderRadius: 4, fontSize: 8, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, fontFamily: "'JetBrains Mono'" }}>All</button>}
+                                <button onClick={() => setModuleResults(null)} style={{ padding: "2px 6px", borderRadius: 4, fontSize: 8, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>×</button>
+                            </div>
+                        </div>
+                        <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            ✓ {moduleResults.url.replace(/^https?:\/\//, "")}
+                        </div>
+                        {moduleResults.parsed.length === 0 && <div style={{ fontSize: 10, color: txm, fontStyle: "italic" }}>No module codes found on this page.</div>}
+                        <div style={{ maxHeight: 180, overflowY: "auto" }}>
+                            {coreMods.length > 0 && <><SectionHeader label="Core" count={coreMods.length} onAddAll={() => { addGroup(coreMods); setModuleResults(null); }} />{coreMods.map((m, i) => <ModRow key={m.code} m={m} i={i} globalIdx={i} />)}</>}
+                            {electiveMods.length > 0 && <><SectionHeader label="Electives" count={electiveMods.length} onAddAll={() => { addGroup(electiveMods, coreMods.length); setModuleResults(null); }} />{electiveMods.map((m, i) => <ModRow key={m.code} m={m} i={i} globalIdx={coreMods.length + i} />)}</>}
+                            {uncategorised.length > 0 && <>{uncategorised.length > 0 && (coreMods.length + electiveMods.length > 0) && <SectionHeader label="Other" count={uncategorised.length} onAddAll={null} />}{uncategorised.map((m, i) => <ModRow key={m.code} m={m} i={i} globalIdx={coreMods.length + electiveMods.length + i} />)}</>}
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* Module list grouped by semester */}
+            {modules.length === 0 && !urlResults && !moduleResults && !showWarn && <div style={{ fontSize: 11, color: txm, fontStyle: "italic", textAlign: "center", padding: "10px 0" }}>Search your TCD course above or add modules manually</div>}
+            {["michaelmas", "hilary", "trinity", "yearlong"].filter(s => semGroups[s]?.length > 0).map(sem => (
+                <div key={sem} style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 8, fontFamily: "'JetBrains Mono'", letterSpacing: 1.5, textTransform: "uppercase", color: TCD_SEMESTER_COLORS[sem], marginBottom: 4 }}>{TCD_SEMESTERS[sem]}</div>
+                    {semGroups[sem].map(m => (
+                        <div key={m.id} className="anim-item" style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0", borderBottom: `1px solid ${bd}` }}>
+                            <div style={{ width: 3, height: 30, borderRadius: 2, background: m.color || TCD_SEMESTER_COLORS[sem], flexShrink: 0 }} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                                    <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, fontWeight: 600, color: m.color || accent, flexShrink: 0 }}>{m.code}</span>
+                                    <span style={{ fontSize: 10, color: tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
+                                </div>
+                                <div style={{ display: "flex", gap: 5, marginTop: 1 }}>
+                                    <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: txm }}>{m.credits} ECTS</span>
+                                    <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: txm }}>· {m.moduleType || "lecture"}</span>
+                                    {m.deadline && <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: "#e74c3c" }}>⚡ {m.deadline}</span>}
+                                </div>
+                            </div>
+                            <button onClick={() => onRemoveModule(m.id)} style={{ fontSize: 12, background: "none", border: "none", cursor: "pointer", color: txm, opacity: 0.4, padding: "0 2px", flexShrink: 0 }}>×</button>
+                        </div>
+                    ))}
+                </div>
+            ))}
+
+            {/* Manual add form */}
+            {addForm ? (
+                <div className="anim-panel" style={{ padding: 8, borderRadius: 8, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)", border: `1px solid ${bd}` }} data-nodrag>
+                    <div style={{ display: "flex", gap: 4, marginBottom: 4 }}>
+                        <input value={formCode} onChange={e => setFormCode(e.target.value)} placeholder="Code (CS3012)" data-nodrag style={inStyle({ width: 90, fontFamily: "'JetBrains Mono'", fontSize: 9 })} />
+                        <input value={formName} onChange={e => setFormName(e.target.value)} placeholder="Module name" data-nodrag style={inStyle({ flex: 1 })} />
+                    </div>
+                    <div style={{ display: "flex", gap: 4, marginBottom: 4 }}>
+                        <input value={formCredits} onChange={e => setFormCredits(e.target.value)} placeholder="ECTS" data-nodrag style={inStyle({ width: 50, fontFamily: "'JetBrains Mono'", fontSize: 9 })} />
+                        <select value={formSemester} onChange={e => setFormSemester(e.target.value)} data-nodrag style={{ ...selStyle, flex: 1 }}>
+                            <option value="michaelmas">Michaelmas</option><option value="hilary">Hilary</option>
+                            <option value="trinity">Trinity Term</option><option value="yearlong">Year-Long</option>
+                        </select>
+                        <select value={formType} onChange={e => setFormType(e.target.value)} data-nodrag style={{ ...selStyle, flex: 1 }}>
+                            <option value="lecture">Lecture</option><option value="tutorial">Tutorial</option>
+                            <option value="lab">Lab</option><option value="seminar">Seminar</option>
+                        </select>
+                    </div>
+                    <div style={{ display: "flex", gap: 4 }}>
+                        <button onClick={addManual} style={{ flex: 1, padding: "3px", borderRadius: 4, fontSize: 9, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, fontFamily: "'JetBrains Mono'" }}>Add module</button>
+                        <button onClick={() => setAddForm(false)} style={{ padding: "3px 9px", borderRadius: 4, fontSize: 9, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>Cancel</button>
+                    </div>
+                </div>
+            ) : (
+                <button onClick={() => setAddForm(true)} style={{ marginTop: 4, width: "100%", padding: "5px", borderRadius: 6, fontSize: 9, cursor: "pointer", background: "transparent", border: `1px dashed ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>+ Add module manually</button>
+            )}
+        </Panel>
+    );
+}
+
+// ═══════════════════════════════════════════════════
+// TIMETABLE PANEL
+// ═══════════════════════════════════════════════════
+function TimetablePanel({ modules, timetable, onAddSlot, onRemoveSlot, accent, light, onClose, ambient }) {
+    const [addForm, setAddForm] = useState(false);
+    const [formModule, setFormModule] = useState(modules[0]?.code || "");
+    const [formDay, setFormDay] = useState("monday");
+    const [formStart, setFormStart] = useState("09:00");
+    const [formEnd, setFormEnd] = useState("10:00");
+    const [formType, setFormType] = useState("lecture");
+    const [formRoom, setFormRoom] = useState("");
+
+    const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
+    const tx = light ? "#2d3436" : "#fff";
+    const bd = light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.08)";
+    const TYPE_LABELS = { lecture: "L", tutorial: "T", lab: "Lab", seminar: "S" };
+    const moduleColorMap = {};
+    modules.forEach(m => { moduleColorMap[m.code] = m.color || accent; });
+
+    // Compute the range of hours to display (min start → max end, clamped to 08–20)
+    const usedHourNums = timetable.flatMap(s => [parseInt(s.startTime), parseInt(s.endTime || s.startTime)]);
+    const minH = usedHourNums.length ? Math.max(8, Math.min(...usedHourNums)) : 9;
+    const maxH = usedHourNums.length ? Math.min(20, Math.max(...usedHourNums)) : 18;
+    const displayHours = TIMETABLE_HOURS.filter(h => { const n = parseInt(h); return n >= minH && n <= maxH; });
+
+    const getSlots = (day, hour) => timetable.filter(s => s.day === day && s.startTime === hour);
+
+    const addSlot = () => {
+        if (!formModule) return;
+        onAddSlot({ id: `s${Date.now()}`, moduleCode: formModule, day: formDay, startTime: formStart, endTime: formEnd, slotType: formType, room: formRoom });
+        setAddForm(false); setFormRoom("");
+    };
+
+    const selStyle = { background: light ? "rgba(255,255,255,0.8)" : "rgba(30,30,50,0.8)", border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, outline: "none", colorScheme: light ? "light" : "dark" };
+
+    return (
+        <Panel x={24} y={500} width={520} title="Timetable" icon="📆" light={light} onClose={onClose} ambient={ambient} accent={accent}>
+            {timetable.length === 0 && !addForm && <div style={{ fontSize: 11, color: txm, fontStyle: "italic", textAlign: "center", padding: "8px 0 4px" }}>No classes yet — add a slot below</div>}
+            {/* Grid */}
+            {timetable.length > 0 && (
+                <div style={{ overflowX: "auto", marginBottom: 8 }}>
+                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 9, tableLayout: "fixed" }}>
+                        <thead>
+                            <tr>
+                                <th style={{ width: 38, padding: "2px 3px", color: txm, fontWeight: 400, textAlign: "left", fontFamily: "'JetBrains Mono'" }}></th>
+                                {WEEK_DAY_LABELS.map((d, i) => <th key={i} style={{ padding: "2px 3px", color: txm, fontWeight: 500, textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 9 }}>{d}</th>)}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {displayHours.map(hour => (
+                                <tr key={hour}>
+                                    <td style={{ padding: "1px 3px", color: txm, fontFamily: "'JetBrains Mono'", fontSize: 8, verticalAlign: "top", whiteSpace: "nowrap" }}>{hour}</td>
+                                    {WEEK_DAYS.map(day => {
+                                        const slots = getSlots(day, hour);
+                                        return (
+                                            <td key={day} style={{ padding: "1px 2px", verticalAlign: "top", borderLeft: `1px solid ${bd}`, borderTop: `1px solid ${bd}`, minWidth: 72, minHeight: 18 }}>
+                                                {slots.map(s => (
+                                                    <div key={s.id} style={{ background: `${moduleColorMap[s.moduleCode] || accent}22`, border: `1px solid ${moduleColorMap[s.moduleCode] || accent}44`, borderRadius: 3, padding: "1px 3px", marginBottom: 1, display: "flex", gap: 2, alignItems: "center" }}>
+                                                        <span style={{ color: moduleColorMap[s.moduleCode] || accent, fontWeight: 700, fontSize: 8, fontFamily: "'JetBrains Mono'" }}>{s.moduleCode}</span>
+                                                        <span style={{ color: txm, fontSize: 7 }}>{TYPE_LABELS[s.slotType] || s.slotType}</span>
+                                                        {s.room && <span style={{ color: txm, fontSize: 7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{s.room}</span>}
+                                                        <button onClick={() => onRemoveSlot(s.id)} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: txm, fontSize: 9, lineHeight: 1, padding: 0, opacity: 0.4, flexShrink: 0 }}>×</button>
+                                                    </div>
+                                                ))}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+            {/* Add slot */}
+            {addForm ? (
+                <div className="anim-panel" style={{ padding: 8, borderRadius: 8, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)", border: `1px solid ${bd}` }} data-nodrag>
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 4 }}>
+                        <select value={formModule} onChange={e => setFormModule(e.target.value)} data-nodrag style={selStyle}>
+                            {modules.length === 0 ? <option value="">Add modules first</option> : modules.map(m => <option key={m.id} value={m.code}>{m.code} — {m.name.slice(0, 28)}</option>)}
+                        </select>
+                        <select value={formDay} onChange={e => setFormDay(e.target.value)} data-nodrag style={selStyle}>
+                            {WEEK_DAYS.map(d => <option key={d} value={d}>{d.charAt(0).toUpperCase() + d.slice(1)}</option>)}
+                        </select>
+                        <select value={formType} onChange={e => setFormType(e.target.value)} data-nodrag style={selStyle}>
+                            <option value="lecture">Lecture</option><option value="tutorial">Tutorial</option>
+                            <option value="lab">Lab</option><option value="seminar">Seminar</option>
+                        </select>
+                    </div>
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+                        <input type="time" value={formStart} onChange={e => setFormStart(e.target.value)} data-nodrag style={{ width: 82, background: "transparent", border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, fontFamily: "'JetBrains Mono'", outline: "none", colorScheme: light ? "light" : "dark" }} />
+                        <span style={{ color: txm, fontSize: 10 }}>→</span>
+                        <input type="time" value={formEnd} onChange={e => setFormEnd(e.target.value)} data-nodrag style={{ width: 82, background: "transparent", border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, fontFamily: "'JetBrains Mono'", outline: "none", colorScheme: light ? "light" : "dark" }} />
+                        <input value={formRoom} onChange={e => setFormRoom(e.target.value)} placeholder="Room (optional)" data-nodrag style={{ flex: 1, background: "transparent", border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 6px", fontSize: 9, color: tx, outline: "none", minWidth: 70 }} />
+                        <button onClick={addSlot} disabled={!formModule} style={{ padding: "2px 9px", borderRadius: 4, fontSize: 9, cursor: "pointer", background: `${accent}22`, border: `1px solid ${accent}44`, color: accent, fontFamily: "'JetBrains Mono'" }}>Add</button>
+                        <button onClick={() => setAddForm(false)} style={{ padding: "2px 7px", borderRadius: 4, fontSize: 9, cursor: "pointer", background: "transparent", border: `1px solid ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>×</button>
+                    </div>
+                </div>
+            ) : (
+                <button onClick={() => { setFormModule(modules[0]?.code || ""); setAddForm(true); }} style={{ marginTop: 2, width: "100%", padding: "5px", borderRadius: 6, fontSize: 9, cursor: "pointer", background: "transparent", border: `1px dashed ${bd}`, color: txm, fontFamily: "'JetBrains Mono'" }}>+ Add class slot</button>
+            )}
+        </Panel>
+    );
+}
 
 // ═══════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════
-function Dashboard() {
+export default function App() {
     const [bg, setBg] = useState("linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)");
     const [greeting, setGreeting] = useState("Plan your week, not just your tasks.");
     const [accent, setAccent] = useState("#00cec9");
     const [ambient, setAmbient] = useState({ ...DEFAULT_AMBIENT });
-    const [showTasks, setShowTasks] = useState(true), [showCal, setShowCal] = useState(true), [showBudget, setShowBudget] = useState(true), [showRewards, setShowRewards] = useState(true);
+    const [showTasks, setShowTasks] = useState(true), [showCal, setShowCal] = useState(true), [showBudget, setShowBudget] = useState(true), [showRewards, setShowRewards] = useState(true), [showWeather, setShowWeather] = useState(true);
+    const [showTCDModules, setShowTCDModules] = useState(false), [showTimetable, setShowTimetable] = useState(false);
+    // TCD state — persisted to localStorage
+    const [modules, setModules] = useState(() => { try { return JSON.parse(localStorage.getItem("tcd_modules") || "[]"); } catch { return []; } });
+    const [timetable, setTimetable] = useState(() => { try { return JSON.parse(localStorage.getItem("tcd_timetable") || "[]"); } catch { return []; } });
+    const [tcdDegree, setTcdDegree] = useState(() => { try { return JSON.parse(localStorage.getItem("tcd_degree") || "null"); } catch { return null; } });
+    useEffect(() => { localStorage.setItem("tcd_modules", JSON.stringify(modules)); }, [modules]);
+    useEffect(() => { localStorage.setItem("tcd_timetable", JSON.stringify(timetable)); }, [timetable]);
+    useEffect(() => { localStorage.setItem("tcd_degree", JSON.stringify(tcdDegree)); }, [tcdDegree]);
     const [postits, setPostits] = useState([]);
+    const [showPostitLibrary, setShowPostitLibrary] = useState(false);
+    const [selectedPostitId, setSelectedPostitId] = useState(null);
     const [tasks, setTasks] = useState([
         { id: "t1", text: "Finish adaptive apps UI polish 🎨", priority: "high", done: false },
         { id: "t2", text: "Review CS deadline list 📚", priority: "medium", done: false },
@@ -1230,13 +1876,27 @@ function Dashboard() {
     ]);
     const [expenses, setExpenses] = useState([{ id: "x1", description: "Coffee ☕", amount: 4.50, category: "food" }, { id: "x2", description: "Bus fare 🚍", amount: 20, category: "transport" }, { id: "x3", description: "Library lunch 🥪", amount: 8.90, category: "food" }]);
     const [budget, setBudgetVal] = useState(500);
+    const [weeklyGoalCategory, setWeeklyGoalCategory] = useState("tasks");
+    const [weeklyGoalTarget, setWeeklyGoalTarget] = useState(5);
     const [input, setInput] = useState(""), [loading, setLoading] = useState(false);
     const [lennyMood, setLennyMood] = useState("neutral");
-    const [msgs, setMsgs] = useState([{ role: "assistant", text: "Ready! (Gemini Flash)\n\n• \"make it cozy\"\n• \"check off documentation\"\n• \"meeting this friday 2pm\"\n• \"I spent €12 on lunch\"\n• \"focus mode\"" }]);
+    const [msgs, setMsgs] = useState([{ role: "assistant", text: `Ready! (${LLM_CONFIG.mode === "local" ? "local LLM" : "API"})\n\n• "make it cozy"\n• "check off documentation"\n• "meeting this friday 2pm"\n• "I spent €12 on lunch"\n• "focus mode"` }]);
 
-    const scrollRef = useRef(null), inputRef = useRef(null), idRef = useRef(300);
+    const scrollRef = useRef(null), inputRef = useRef(null), idRef = useRef(300), ambientTimerRef = useRef(null);
+    const headerRef = useRef(null);
+    const [headerLockY, setHeaderLockY] = useState(0);
+    useEffect(() => {
+        if (!headerRef.current) return;
+        const ro = new ResizeObserver(entries => setHeaderLockY(entries[0].contentRect.height + 8));
+        ro.observe(headerRef.current);
+        return () => ro.disconnect();
+    }, []);
     const gid = () => `i${idRef.current++}`;
     useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, loading]);
+    useEffect(() => {
+        if (showPostitLibrary && !selectedPostitId && postits.length) setSelectedPostitId(postits[0].id);
+        if (!postits.length && selectedPostitId) setSelectedPostitId(null);
+    }, [showPostitLibrary, postits, selectedPostitId]);
 
     const themes = {
         cozy: { bg: "linear-gradient(135deg, #2d1b14 0%, #1a1410 50%, #0d0a07 100%)", accent: "#e17055" },
@@ -1247,10 +1907,19 @@ function Dashboard() {
         minimal: { bg: "#f5f0eb", accent: "#2d3436" },
     };
 
-    const snap = () => ({ tasks: tasks.slice(0, 10).map(t => t.text + (t.done ? " ✓" : "")), events: events.slice(0, 5).map(e => `${e.title} ${e.date}`), budget: `${expenses.reduce((s, e) => s + e.amount, 0).toFixed(0)}/${budget}`, mood: ambient.mood });
+    const snap = () => ({
+        tasks: tasks.slice(0, 10).map(t => t.text + (t.done ? " ✓" : "")),
+        events: events.slice(0, 5).map(e => `${e.title} ${e.date}`),
+        notes: postits.slice(0, 6).map(n => n.content),
+        budget: `${expenses.reduce((s, e) => s + e.amount, 0).toFixed(0)}/${budget}`,
+        mood: ambient.mood,
+        modules: modules.slice(0, 10).map(m => `${m.code} ${m.name} (${m.semester})`),
+        tcdDegree: tcdDegree ? `${tcdDegree.name}, ${tcdDegree.college}` : null,
+    });
 
     const manualAddTask = (text) => {
-        setTasks(p => [...p, { id: gid(), text, priority: "medium", done: false }]);
+        if (!text.trim()) return;
+        setTasks(p => [...p, { id: gid(), text: text.trim(), priority: "medium", done: false }]);
         const inferred = inferMood(text, [{ type: "add_task" }]);
         if (inferred) setLennyMood(inferred);
         callAmbientLLM(`User added task: "${text}". Emotional weight?`).then(r => {
@@ -1279,7 +1948,7 @@ function Dashboard() {
         for (const a of actions) {
             const t = a.type;
             if (t === "change_bg" && a.color) setBg(a.color);
-            else if (t === "add_postit") setPostits(p => [...p, { id: gid(), content: a.content || "Note", color: a.color || "#fef68a", x: Number(a.x) || 80 + Math.random() * 300, y: Number(a.y) || 40 + Math.random() * 200 }]);
+            else if (t === "add_postit") setPostits(p => [...p, { id: gid(), content: a.content || "Note", color: a.color || "#fef68a", x: Number(a.x) || 80 + Math.random() * 900, y: Number(a.y) || 40 + Math.random() * 800 }]);
             else if (t === "add_task") setTasks(p => [...p, { id: gid(), text: a.text || "New task", priority: a.priority || "medium", done: false }]);
             else if (t === "complete_task" && a.text) setTasks(p => p.map(tk => !tk.done && !tk.isParent && String(tk.text).toLowerCase().includes(String(a.text).toLowerCase()) ? { ...tk, done: true } : tk));
             else if (t === "delete_task" && a.text) setTasks(p => p.filter(tk => !String(tk.text).toLowerCase().includes(String(a.text).toLowerCase())));
@@ -1295,13 +1964,25 @@ function Dashboard() {
                     return result;
                 });
             }
-            else if (t === "add_timer") setTimers(p => [...p, { id: gid(), minutes: Number(a.minutes) || 5, label: a.label || "Timer" }]);
+            else if (t === "add_timer") { const mins = Number(a.minutes); if (mins > 0) setTimers(p => [...p, { id: gid(), minutes: mins, label: a.label || "Timer" }]); else console.warn("[exec] add_timer skipped: invalid minutes:", a.minutes); }
             else if (t === "change_theme" && themes[a.theme]) { setBg(themes[a.theme].bg); setAccent(themes[a.theme].accent); }
             else if (t === "set_greeting" && a.text) setGreeting(a.text);
             else if (t === "add_widget" && a.widgetType) setWidgets(p => [...p, { id: gid(), type: a.widgetType }]);
             else if (t === "add_event") setEvents(p => [...p, { id: gid(), title: a.title || "Event", date: a.date || new Date().toISOString().split("T")[0], time: a.time || "09:00", duration: Number(a.duration) || 60, color: a.color || "#6c5ce7" }]);
             else if (t === "delete_event" && a.title) setEvents(p => p.filter(e => !String(e.title).toLowerCase().includes(String(a.title).toLowerCase())));
             else if (t === "add_expense") setExpenses(p => [...p, { id: gid(), description: a.description || "Expense", amount: Number(a.amount) || 0, category: a.category || "other" }]);
+            else if (t === "add_note") setPostits(p => {
+                const pos = getNextPostitPosition(p.length);
+                return [
+                    ...p,
+                    {
+                        id: gid(),
+                        content: a.content || "Quick note",
+                        color: a.color || "#fef68a",
+                        ...pos
+                    }
+                ];
+            });
             else if (t === "set_budget") setBudgetVal(Number(a.amount) || 0);
             else if (t === "adjust_ambient") {
                 setAmbient(prev => ({
@@ -1314,7 +1995,12 @@ function Dashboard() {
                 // Also try to sync lenny from LLM mood if it maps to something
                 if (a.mood) { const lm = inferMood(a.mood, []); if (lm) setLennyMood(lm); }
             }
-            else if (t === "clear_canvas") { setPostits([]); setTimers([]); setWidgets([]); }
+            else if (t === "clear_canvas") { setPostits([]); setTimers([]); setWidgets([]); setSelectedPostitId(null); }
+            else if (t === "add_module" && a.code) setModules(p => p.some(m => m.code === a.code) ? p : [...p, { id: gid(), code: a.code, name: a.name || a.code, credits: Number(a.credits) || 5, semester: a.semester || "michaelmas", moduleType: a.moduleType || "lecture", color: MODULE_COLORS[p.length % MODULE_COLORS.length] }]);
+            else if (t === "remove_module" && a.code) setModules(p => p.filter(m => m.code !== a.code));
+            else if (t === "show_tcd_modules") setShowTCDModules(true);
+            else if (t === "show_timetable") setShowTimetable(true);
+            else if (t === "add_timetable_slot" && a.moduleCode) setTimetable(p => [...p, { id: gid(), moduleCode: a.moduleCode, day: a.day || "monday", startTime: a.startTime || "09:00", endTime: a.endTime || "10:00", slotType: a.slotType || "lecture", room: a.room || "" }]);
         }
     };
 
@@ -1339,10 +2025,16 @@ function Dashboard() {
                 // Still fire ambient for visual effects (particles/glow) if no ambient action came back
                 const hasAmbient = r.actions.some(a => a.type === "adjust_ambient");
                 if (!hasAmbient) {
-                    callAmbientLLM(`User said: "${txt}". Actions taken: ${r.actions.map(a => a.type).join(", ") || "none"}. Emotional weight?`).then(ar => {
-                        const safe = (ar.actions || []).filter(a => a.type === "adjust_ambient");
-                        if (safe.length) exec(safe);
-                    });
+                    // Debounce: fire after main reply is rendered to avoid queuing
+                    // behind the primary inference call on the serial llama-server.
+                    clearTimeout(ambientTimerRef.current);
+                    const ambientMsg = `User said: "${txt}". Actions taken: ${r.actions.map(a => a.type).join(", ") || "none"}. Emotional weight?`;
+                    ambientTimerRef.current = setTimeout(() => {
+                        callAmbientLLM(ambientMsg).then(ar => {
+                            const safe = (ar.actions || []).filter(a => a.type === "adjust_ambient");
+                            if (safe.length) exec(safe);
+                        });
+                    }, 1500);
                 }
             }
         } catch {
@@ -1358,7 +2050,15 @@ function Dashboard() {
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     const txs = light ? "rgba(45,52,54,0.12)" : "rgba(255,255,255,0.1)";
     const pBd = light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.06)";
-    const togs = [{ k: "t", l: "Tasks", s: showTasks, f: setShowTasks, i: "✓" }, { k: "c", l: "Calendar", s: showCal, f: setShowCal, i: "📅" }, { k: "b", l: "Budget", s: showBudget, f: setShowBudget, i: "💰" }, { k: "r", l: "Rewards", s: showRewards, f: setShowRewards, i: "⭐" }];
+    const togs = [
+        { k: "t", l: "Tasks", s: showTasks, f: setShowTasks, i: "✓" },
+        { k: "c", l: "Calendar", s: showCal, f: setShowCal, i: "📅" },
+        { k: "b", l: "Budget", s: showBudget, f: setShowBudget, i: "💰" },
+        { k: "r", l: "Rewards", s: showRewards, f: setShowRewards, i: "⭐" },
+        { k: "w", l: "Weather", s: showWeather, f: setShowWeather, i: "🌤️" },
+        { k: "m", l: "Modules", s: showTCDModules, f: setShowTCDModules, i: "🎓" },
+        { k: "tt", l: "Timetable", s: showTimetable, f: setShowTimetable, i: "📆" },
+    ];
 
     const activeTasks = tasks.filter(t => !t.done && !t.isParent).length;
     const completedTasks = tasks.filter(t => t.done).length;
@@ -1366,16 +2066,24 @@ function Dashboard() {
     const weeklySpend = expenses.reduce((s, e) => s + e.amount, 0);
     const budgetProgress = budget > 0 ? Math.min(100, Math.round((weeklySpend / budget) * 100)) : 0;
     const studyStreak = Math.min(7, Math.max(1, activeTasks + completedTasks));
-    const weeklyGoalTarget = 5;
-    const weeklyGoalProgress = Math.min(completedTasks, weeklyGoalTarget);
+    const weeklyGoalSources = {
+        tasks: { label: "Tasks completed", value: completedTasks, unit: "task" },
+        events: { label: "Events planned", value: upcomingEvents, unit: "event" },
+        study: { label: "Study streak", value: studyStreak, unit: "day" },
+    };
+    const activeWeeklyGoal = weeklyGoalSources[weeklyGoalCategory] || weeklyGoalSources.tasks;
+    const weeklyGoalProgress = Math.min(activeWeeklyGoal.value, weeklyGoalTarget);
     const weeklyGoalMet = weeklyGoalProgress >= weeklyGoalTarget;
-    const weeklyGoalHelper = weeklyGoalMet ? "Reward unlocked" : weeklyGoalTarget - weeklyGoalProgress === 1 ? "1 task left" : `${weeklyGoalTarget - weeklyGoalProgress} tasks left`;
+    const weeklyGoalRemaining = Math.max(weeklyGoalTarget - weeklyGoalProgress, 0);
+    const weeklyGoalHelper = weeklyGoalMet ? "Reward unlocked" : weeklyGoalRemaining === 1 ? `1 ${activeWeeklyGoal.unit} left` : `${weeklyGoalRemaining} ${activeWeeklyGoal.unit}s left`;
+    const totalModuleCredits = modules.reduce((s, m) => s + (m.credits || 5), 0);
     const statCards = [
         { label: "Active tasks", value: activeTasks, helper: activeTasks <= 2 ? "On track" : "Busy week" },
         { label: "Upcoming events", value: upcomingEvents, helper: upcomingEvents > 0 ? "Plan ahead" : "Clear calendar" },
         { label: "Budget used", value: `${budgetProgress}%`, helper: budgetProgress >= 70 ? "Watch spend" : "On track" },
         { label: "Study streak", value: `${studyStreak}d`, helper: studyStreak >= 5 ? "Building rhythm" : "Momentum" },
-        { label: "Weekly goal", value: `${weeklyGoalProgress}/${weeklyGoalTarget}`, helper: weeklyGoalHelper },
+        { label: activeWeeklyGoal.label, value: `${weeklyGoalProgress}/${weeklyGoalTarget}`, helper: weeklyGoalHelper },
+        { label: "Modules", value: modules.length > 0 ? `${modules.length}` : "—", helper: modules.length > 0 ? `${totalModuleCredits} ECTS` : "Add via 🎓" },
     ];
     const quickThemes = [
         { key: "focus", label: "Deep focus" },
@@ -1399,6 +2107,35 @@ function Dashboard() {
     };
 
     const adaptiveStatus = adaptiveStatusMap[ambient.mood] || "Planning mode active";
+
+    const noteColors = ["#fef68a", "#ffd6a5", "#caffbf", "#bde0fe", "#e9d5ff"];
+    const getNextPostitPosition = (count) => ({
+        x: 1025 + (count % 4) * 26,
+        y: 245 + (count % 4) * 22
+    });
+    const selectedPostit = postits.find(p => p.id === selectedPostitId) || null;
+    const createPostit = () => {
+        const id = gid();
+
+        setPostits(p => {
+            const pos = getNextPostitPosition(p.length);
+            const next = {
+                id,
+                content: "New sticky note",
+                color: noteColors[p.length % noteColors.length],
+                ...pos
+            };
+            return [...p, next];
+        });
+
+        setShowPostitLibrary(true);
+        setSelectedPostitId(id);
+    };
+    const updatePostit = (id, updates) => setPostits(pp => pp.map(n => n.id === id ? { ...n, ...updates } : n));
+    const deletePostit = (id) => {
+        setPostits(pp => pp.filter(n => n.id !== id));
+        setSelectedPostitId(cur => cur === id ? null : cur);
+    };
 
     return <>
         <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,700;1,400&family=JetBrains+Mono:wght@200;400;600;700&display=swap" rel="stylesheet" />
@@ -1429,14 +2166,13 @@ function Dashboard() {
 
                 {/* Header */}
                 <div style={{ position: "relative", zIndex: 50, padding: "14px 24px 8px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}>
-                    <div style={{ maxWidth: 560 }}>
+                    <div style={{ maxWidth: 900 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
-                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, color: txm, letterSpacing: 1.7, textTransform: "uppercase" }}>Adaptive Student Planner</span>
-                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, letterSpacing: 1, padding: "2px 7px", borderRadius: 999, background: `${accent}18`, color: accent, border: `1px solid ${accent}33` }}>TRINITY MODE</span>
-                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, letterSpacing: 1, padding: "2px 7px", borderRadius: 999, background: "rgba(66,133,244,0.15)", color: "#4285f4", border: "1px solid rgba(66,133,244,0.25)" }}>GEMINI FLASH</span>
+                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, color: txm, letterSpacing: 1.7, textTransform: "uppercase" }}>Adaptive Dashboard</span>
+                            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, letterSpacing: 1, padding: "2px 7px", borderRadius: 999, background: "rgba(0,184,148,0.15)", color: "#00b894", border: "1px solid rgba(0,184,148,0.25)" }}>LOCAL</span>
                         </div>
                         <h1 style={{ fontFamily: "'DM Sans'", fontWeight: 300, fontSize: 24, margin: 0, letterSpacing: -0.5, color: light ? "rgba(45,52,54,0.92)" : "rgba(255,255,255,0.92)" }}>{greeting}</h1>
-                        <div style={{ fontSize: 11.5, lineHeight: 1.45, marginTop: 5, color: light ? "rgba(45,52,54,0.62)" : "rgba(255,255,255,0.58)", maxWidth: 500 }}>
+                        <div style={{ fontSize: 11.5, lineHeight: 1.45, marginTop: 5, color: light ? "rgba(45,52,54,0.62)" : "rgba(255,255,255,0.58)", maxWidth: 900 }}>
                             A calmer dashboard for modules, money, and weekly goals — with styling that reacts to how your week feels.
                         </div>
                         <div style={{ marginTop: 10 }}>
@@ -1471,6 +2207,7 @@ function Dashboard() {
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
                         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                            <button onClick={() => setShowPostitLibrary(true)} style={{ padding: "5px 10px", borderRadius: 999, fontSize: 9.5, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: showPostitLibrary ? `${accent}24` : (light ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)"), border: `1px solid ${showPostitLibrary ? `${accent}50` : pBd}`, color: showPostitLibrary ? accent : txm, display: "flex", alignItems: "center", gap: 4, transition: "all 0.2s" }}><span style={{ fontSize: 10 }}>📝</span> Post-its</button>
                             {togs.map(t => <button key={t.k} onClick={() => t.f(v => !v)} style={{ padding: "5px 10px", borderRadius: 999, fontSize: 9.5, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: t.s ? `${accent}20` : (light ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)"), border: `1px solid ${t.s ? `${accent}40` : pBd}`, color: t.s ? accent : txm, display: "flex", alignItems: "center", gap: 4, transition: "all 0.2s" }}><span style={{ fontSize: 10 }}>{t.i}</span> {t.l}</button>)}
                         </div>
                         <div style={{ display: "flex", gap: 5, flexWrap: "wrap", justifyContent: "flex-end", maxWidth: 260 }}>
@@ -1503,18 +2240,73 @@ function Dashboard() {
                     </div>
                 </div>
 
+                <HeaderLockCtx.Provider value={headerLockY}>
                 {showTasks && <TasksPanel tasks={tasks} onToggle={id => setTasks(t => t.map(tk => tk.id === id ? { ...tk, done: !tk.done } : tk))} onEditTask={(id, v) => setTasks(t => t.map(tk => tk.id === id ? { ...tk, text: v } : tk))} onRequestSplit={t => send(`split the task "${t}" into subtasks`)} onAddTask={manualAddTask} accent={accent} light={light} onClose={() => setShowTasks(false)} ambient={ambient} />}
                 {showCal && <CalendarPanel events={events} onDeleteEvent={id => setEvents(e => e.filter(ev => ev.id !== id))} onAddEvent={manualAddEvent} onEditEvent={manualEditEvent} accent={accent} light={light} onClose={() => setShowCal(false)} ambient={ambient} />}
                 {showBudget && <BudgetPanel expenses={expenses} budget={budget} accent={accent} light={light} onClose={() => setShowBudget(false)} onDeleteExpense={id => setExpenses(e => e.filter(ex => ex.id !== id))} onAddExpense={manualAddExpense} ambient={ambient} />}
-                {showRewards && <RewardsPanel completedTasks={completedTasks} weeklyGoalTarget={weeklyGoalTarget} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" />}
+                {showRewards && <RewardsPanel weeklyGoalCategory={weeklyGoalCategory} setWeeklyGoalCategory={setWeeklyGoalCategory} weeklyGoalTarget={weeklyGoalTarget} setWeeklyGoalTarget={setWeeklyGoalTarget} weeklyGoalProgress={weeklyGoalProgress} weeklyGoalLabel={activeWeeklyGoal.label} weeklyGoalHelper={weeklyGoalHelper} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" />}
+                {showWeather && <WeatherWidget light={light} accent={accent} ambient={ambient} onClose={() => setShowWeather(false)} />}
+                {showTCDModules && <TCDModulesPanel modules={modules} tcdDegree={tcdDegree} onSetDegree={setTcdDegree} onAddModule={m => setModules(p => p.some(x => x.code === m.code) ? p : [...p, m])} onRemoveModule={id => setModules(p => p.filter(m => m.id !== id))} accent={accent} light={light} onClose={() => setShowTCDModules(false)} ambient={ambient} />}
+                {showTimetable && <TimetablePanel modules={modules} timetable={timetable} onAddSlot={s => setTimetable(p => [...p, s])} onRemoveSlot={id => setTimetable(p => p.filter(s => s.id !== id))} accent={accent} light={light} onClose={() => setShowTimetable(false)} ambient={ambient} />}
+
+                {showPostitLibrary && <div style={{ position: "absolute", inset: 0, zIndex: 120, background: light ? "rgba(245,240,235,0.62)" : "rgba(8,10,18,0.58)", backdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+                    <div className="anim-panel" style={{ width: "min(940px, 92vw)", height: "min(620px, 84vh)", display: "grid", gridTemplateColumns: "320px 1fr", background: light ? "rgba(255,255,255,0.78)" : "rgba(10,12,22,0.82)", border: `1px solid ${pBd}`, borderRadius: 22, overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,0.28)" }}>
+                        <div style={{ borderRight: `1px solid ${pBd}`, padding: 18, display: "flex", flexDirection: "column", minHeight: 0 }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 }}>
+                                <div>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 1.6, textTransform: "uppercase", color: txm }}>Sticky notes</div>
+                                    <div style={{ fontSize: 18, fontWeight: 700, color: tx, marginTop: 4 }}>Notes library</div>
+                                </div>
+                                <div style={{ display: "flex", gap: 6 }}>
+                                    <button onClick={createPostit} style={{ width: 32, height: 32, borderRadius: 10, border: `1px solid ${accent}44`, background: `${accent}18`, color: accent, cursor: "pointer", fontSize: 18, lineHeight: 1 }}>+</button>
+                                    <button onClick={() => setShowPostitLibrary(false)} style={{ width: 32, height: 32, borderRadius: 10, border: `1px solid ${pBd}`, background: "transparent", color: txm, cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>
+                                </div>
+                            </div>
+                            <div style={{ display: "grid", gap: 10, overflowY: "auto", paddingRight: 4 }}>
+                                {postits.length === 0 && <div style={{ padding: 16, borderRadius: 14, border: `1px dashed ${pBd}`, color: txm, fontSize: 11 }}>No sticky notes yet. Click + to create one.</div>}
+                                {postits.map((note, idx) => {
+                                    const active = note.id === selectedPostitId;
+                                    const noteColor = note.color || noteColors[idx % noteColors.length];
+                                    return <button key={note.id} onClick={() => setSelectedPostitId(note.id)} style={{ textAlign: "left", border: `1px solid ${active ? `${accent}55` : pBd}`, background: active ? (light ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.06)") : (light ? "rgba(255,255,255,0.68)" : "rgba(255,255,255,0.03)"), borderRadius: 16, padding: 12, cursor: "pointer", boxShadow: active ? `0 0 0 1px ${accent}18` : "none" }}>
+                                        <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                                            <div style={{ width: 12, height: 12, borderRadius: 999, background: noteColor, boxShadow: `0 0 0 3px ${noteColor}22`, marginTop: 2, flexShrink: 0 }} />
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{ fontSize: 11, color: tx, lineHeight: 1.45, fontWeight: active ? 600 : 500 }}>{note.content || "Untitled note"}</div>
+                                            </div>
+                                        </div>
+                                    </button>;
+                                })}
+                            </div>
+                        </div>
+                        <div style={{ padding: 22, display: "flex", flexDirection: "column", minHeight: 0 }}>
+                            {selectedPostit ? <>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+                                    <div>
+                                        <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 1.6, textTransform: "uppercase", color: txm }}>Editor</div>
+                                        <div style={{ fontSize: 18, fontWeight: 700, color: tx, marginTop: 4 }}>Open sticky note</div>
+                                    </div>
+                                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                        {noteColors.map(c => <button key={c} onClick={() => updatePostit(selectedPostit.id, { color: c })} style={{ width: 20, height: 20, borderRadius: 999, border: `2px solid ${(selectedPostit.color || c) === c ? tx : 'transparent'}`, background: c, cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.12)" }} />)}
+                                        <button onClick={() => deletePostit(selectedPostit.id)} style={{ padding: "6px 10px", borderRadius: 10, border: `1px solid ${pBd}`, background: "transparent", color: txm, cursor: "pointer", fontFamily: "'JetBrains Mono'", fontSize: 10 }}>Delete</button>
+                                    </div>
+                                </div>
+                                <div style={{ flex: 1, borderRadius: 24, background: selectedPostit.color || "#fef68a", padding: 22, boxShadow: "0 18px 50px rgba(0,0,0,0.18)", display: "flex", flexDirection: "column" }}>
+                                    <div style={{ fontSize: 12, color: "rgba(45,52,54,0.55)", fontFamily: "'JetBrains Mono'", letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 12 }}>Sticky note</div>
+                                    <EditableText value={selectedPostit.content} onChange={v => updatePostit(selectedPostit.id, { content: v })} maxLen={POSTIT_CHAR_LIMIT} multiline style={{ fontFamily: "'Caveat', cursive", fontSize: 28, lineHeight: 1.25, color: "#111111", flex: 1 }} />
+                                </div>
+                            </> : <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: txm, fontSize: 12 }}>Select a sticky note or click + to create one.</div>}
+                        </div>
+                    </div>
+                </div>}
 
                 {postits.map(p => <PostIt key={p.id} id={p.id} content={p.content} color={p.color} initialX={p.x} initialY={p.y} onRemove={id => setPostits(pp => pp.filter(n => n.id !== id))} onEdit={(id, v) => setPostits(pp => pp.map(n => n.id === id ? { ...n, content: v } : n))} />)}
                 {timers.map(t => <TimerWidget key={t.id} id={t.id} minutes={t.minutes} label={t.label} onRemove={id => setTimers(tt => tt.filter(n => n.id !== id))} light={light} />)}
                 {widgets.map(w => w.type === "clock" ? <ClockWidget key={w.id} id={w.id} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} light={light} /> : w.type === "quote" ? <QuoteWidget key={w.id} id={w.id} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} light={light} /> : null)}
 
-                {!postits.length && !timers.length && !widgets.length && !showTasks && !showCal && !showBudget && !showRewards && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", color: txs, userSelect: "none", zIndex: 5 }}>
+                {!postits.length && !timers.length && !widgets.length && !showTasks && !showCal && !showBudget && !showRewards && !showWeather && !showTCDModules && !showTimetable && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", color: txs, userSelect: "none", zIndex: 5 }}>
                     <div style={{ fontSize: 40, marginBottom: 8 }}>✦</div><div style={{ fontFamily: "'JetBrains Mono'", fontSize: 10, letterSpacing: 2 }}>YOUR STUDENT DASHBOARD IS CLEAR</div><div style={{ marginTop: 8, fontSize: 11, color: txm }}>Turn panels back on or ask the copilot to add something.</div>
                 </div>}
+                </HeaderLockCtx.Provider>
             </div>
 
             {/* Chat */}
@@ -1524,7 +2316,7 @@ function Dashboard() {
                         <div style={{ width: 26, height: 26, borderRadius: 7, background: `linear-gradient(135deg, ${accent}, ${accent}88)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, transition: "background 0.8s" }}>⚡</div>
                         <div>
                             <div style={{ fontSize: 12, fontWeight: 600 }}>Study Copilot</div>
-                            <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 1 }}>{loading ? "THINKING..." : "LOCAL PLANNING CHAT"}</div>
+                            <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 1 }}>{loading ? "THINKING..." : "LOCAL LLM"}</div>
                         </div>
                     </div>
                 </div>
@@ -1538,7 +2330,7 @@ function Dashboard() {
                 </div>
                 <div style={{ padding: "8px 10px 10px" }}>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "0 2px 8px" }}>
-                        {["split my assignment into subtasks", "log €8 lunch", "add study timer", "make it cozy"].map((prompt) => (
+                        {["show my modules", "add module CS3012", "log €8 lunch", "add study timer", "make it cozy"].map((prompt) => (
                             <button key={prompt} onClick={() => send(prompt)} disabled={loading} style={{ padding: "5px 8px", borderRadius: 999, border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.07)"}`, background: light ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.035)", color: txm, fontSize: 9, fontFamily: "'JetBrains Mono'", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}>
                                 {prompt}
                             </button>
