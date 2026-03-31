@@ -1014,7 +1014,8 @@ function CalendarPanel({ events, onDeleteEvent, onAddEvent, onEditEvent, accent,
                         </div>
                     )}
                     {Object.entries(groupEventsByDate()).map(([date, dayEvents]) => {
-                        const d = new Date(date);
+                        const [y, mo, day] = date.split("-").map(Number);
+                        const d = new Date(y, mo - 1, day);
                         const isTodayDate = isToday(d);
                         const isPastDate = d < new Date(new Date().setHours(0, 0, 0, 0));
                         return (
