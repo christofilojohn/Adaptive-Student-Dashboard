@@ -788,7 +788,9 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
                 {expenses.length === 0 && <div style={{ fontSize: 10, color: txm, fontStyle: "italic" }}>No expenses</div>}
                 {[...expenses].reverse().slice(0, 6).map(ex => {
                     const em = guessEmoji(ex.description);
-                    const expenseDate = parseLocalDate(ex.date);
+                    const exDate = parseLocalDate(ex.date);
+                    const dateStr = exDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                    const isToday = exDate.toDateString() === today.toDateString();
                     const dateStr = expenseDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
                     const isToday = expenseDate.toDateString() === today.toDateString();
                     return (
