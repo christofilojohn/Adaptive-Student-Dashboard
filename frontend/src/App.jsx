@@ -590,7 +590,7 @@ function CalendarPanel({ events, onDeleteEvent, onAddEvent, onEditEvent, accent,
     const dNF = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
     const mN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     const week = Array.from({ length: 7 }, (_, i) => { const d = new Date(today); d.setDate(d.getDate() + i); return d; });
-    const evFor = d => events.filter(e => e.date === d.toISOString().split("T")[0]).sort((a, b) => a.time.localeCompare(b.time));
+    const evFor = d => events.filter(e => e.date === d.toISOString().split("T")[0]).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
     const evColors = ["#6c5ce7", "#00cec9", "#e17055", "#00b894", "#fdcb6e", "#e84393", "#74b9ff", "#a29bfe"];
 
     const exportICS = () => {
