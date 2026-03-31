@@ -654,7 +654,7 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     const [showInsights, setShowInsights] = useState(false);
     const [desc, setDesc] = useState(""), [amt, setAmt] = useState(""), [cat, setCat] = useState("other");
     const [error, setError] = useState("");
-    const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split('T')[0]);
+    const [expenseDate, setExpenseDate] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; });
     const [insightsPeriod, setInsightsPeriod] = useState("weekly"); // "weekly" or "monthly"
     const [chartType, setChartType] = useState("histogram"); // "histogram" or "line"
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
