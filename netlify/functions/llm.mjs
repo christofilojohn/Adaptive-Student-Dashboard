@@ -1,7 +1,6 @@
 // Netlify serverless function — proxies requests to Gemini Flash
 // Env vars needed:
 //   GEMINI_API_KEY     — your Google AI Studio key
-//   PASSPHRASE_HASH   — SHA-256 hex of your passphrase
 //   GEMINI_MODEL       — (optional) defaults to gemini-2.0-flash
 
 export default async (req) => {
@@ -14,13 +13,7 @@ export default async (req) => {
 
     try {
         const body = await req.json();
-        const { passphraseHash, systemPrompt, userMsg, maxTokens = 500 } = body;
-
-        // Validate passphrase
-        const expected = process.env.PASSPHRASE_HASH;
-        if (!expected || passphraseHash !== expected) {
-            return json({ error: "Invalid passphrase" }, 403);
-        }
+        const { systemPrompt, userMsg, maxTokens = 500 } = body;
 
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {
