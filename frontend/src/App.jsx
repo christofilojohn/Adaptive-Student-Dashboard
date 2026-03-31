@@ -21,6 +21,13 @@ const TIMETABLE_HOURS = Array.from({ length: 13 }, (_, i) => `${(i + 8).toString
 const WEEK_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday"];
 const WEEK_DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
+const toLocalDateStr = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+};
+
 // ═══════════════════════════════════════════════════
 // SMART EMOJI GUESSER
 // ═══════════════════════════════════════════════════
@@ -69,7 +76,7 @@ function guessEmoji(text) {
 // DATE AWARENESS
 // ═══════════════════════════════════════════════════
 function buildDateContext() {
-    const now = new Date(), iso = (d) => d.toISOString().split("T")[0];
+    const now = new Date(), iso = (d) => toLocalDateStr(d);
     const dn = (d) => ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][d.getDay()];
     const ad = (d, n) => { const r = new Date(d); r.setDate(r.getDate() + n); return r; };
     const dow = now.getDay();
@@ -572,17 +579,26 @@ function TasksPanel({ tasks, onToggle, onEditTask, onRequestSplit, onAddTask, ac
     );
 }
 
-function CalendarPanel({ events, onDeleteEvent, onAddEvent, accent, light, onClose, ambient }) {
+function CalendarPanel({ events, onDeleteEvent, onAddEvent, onEditEvent, accent, light, onClose, ambient }) {
     const [view, setView] = useState("week");
     const [showForm, setShowForm] = useState(false);
-    const [formTitle, setFormTitle] = useState(""), [formDate, setFormDate] = useState(""), [formTime, setFormTime] = useState("09:00");
+    const [selectedEvent, setSelectedEvent] = useState(null);
+    const [selectedDate, setSelectedDate] = useState(null);
+    const [currentMonth, setCurrentMonth] = useState(new Date());
+    const [formTitle, setFormTitle] = useState("");
+    const [formDate, setFormDate] = useState("");
+    const [formTime, setFormTime] = useState("09:00");
+    const [formDuration, setFormDuration] = useState(60);
+    const [formColor, setFormColor] = useState("");
     const today = new Date();
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     const tx = light ? "#2d3436" : "#fff";
     const dN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const dNF = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const mN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     const week = Array.from({ length: 7 }, (_, i) => { const d = new Date(today); d.setDate(d.getDate() + i); return d; });
-    const evFor = d => events.filter(e => e.date === d.toISOString().split("T")[0]);
-    const evColors = ["#6c5ce7", "#00cec9", "#e17055", "#00b894", "#fdcb6e", "#e84393"];
+    const evFor = d => events.filter(e => e.date === toLocalDateStr(d)).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+    const evColors = ["#6c5ce7", "#00cec9", "#e17055", "#00b894", "#fdcb6e", "#e84393", "#74b9ff", "#a29bfe"];
 
     const exportICS = () => {
         let ics = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Dashboard//EN\n";
@@ -592,59 +608,524 @@ function CalendarPanel({ events, onDeleteEvent, onAddEvent, accent, light, onClo
         });
         ics += "END:VCALENDAR"; const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([ics], { type: "text/calendar" })); a.download = "calendar.ics"; a.click();
     };
-    const submitEvent = () => {
-        if (!formTitle.trim()) return;
-        onAddEvent(formTitle.trim(), formDate || today.toISOString().split("T")[0], formTime, evColors[Math.floor(Math.random() * evColors.length)]);
-        setFormTitle(""); setFormDate(""); setFormTime("09:00"); setShowForm(false);
+
+    const openAddForm = (date = null, time = "09:00") => {
+        setSelectedEvent(null);
+        setFormTitle("");
+        setFormDate(date || toLocalDateStr(today));
+        setFormTime(time);
+        setFormDuration(60);
+        setFormColor(evColors[Math.floor(Math.random() * evColors.length)]);
+        setShowForm(true);
     };
 
+    const openEditForm = (ev) => {
+        setSelectedEvent(ev);
+        setFormTitle(ev.title);
+        setFormDate(ev.date);
+        setFormTime(ev.time || "09:00");
+        setFormDuration(ev.duration || 60);
+        setFormColor(ev.color || accent);
+        setShowForm(true);
+    };
+
+    const submitEvent = () => {
+        if (!formTitle.trim()) return;
+        if (selectedEvent) {
+            onEditEvent(selectedEvent.id, formTitle.trim(), formDate, formTime, formDuration, formColor);
+        } else {
+            onAddEvent(formTitle.trim(), formDate, formTime, formDuration, formColor);
+        }
+        setShowForm(false);
+        setSelectedEvent(null);
+        setSelectedDate(null);
+    };
+
+    const getMonthDays = () => {
+        const year = currentMonth.getFullYear();
+        const month = currentMonth.getMonth();
+        const firstDay = new Date(year, month, 1);
+        const lastDay = new Date(year, month + 1, 0);
+        const daysInMonth = lastDay.getDate();
+        const startDayOfWeek = firstDay.getDay();
+        const days = [];
+        for (let i = 0; i < startDayOfWeek; i++) days.push(null);
+        for (let i = 1; i <= daysInMonth; i++) days.push(new Date(year, month, i));
+        return days;
+    };
+
+    const formatDuration = (mins) => {
+        if (mins < 60) return `${mins}m`;
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    };
+
+    const groupEventsByDate = () => {
+        const grouped = {};
+        [...events].sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`)).forEach(ev => {
+            if (!grouped[ev.date]) grouped[ev.date] = [];
+            grouped[ev.date].push(ev);
+        });
+        return grouped;
+    };
+
+    const isToday = (d) => d.toDateString() === today.toDateString();
+    const isPast = (d) => d < new Date(new Date(today).setHours(0, 0, 0, 0));
+
     return (
-        <Panel x={24} y={485} width={330} title="Calendar" icon="📅" light={light} onClose={onClose} ambient={ambient} accent={accent}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <div style={{ display: "flex", gap: 3 }}>
-                    {["week", "list"].map(v => <button key={v} onClick={() => setView(v)} style={{ padding: "2px 7px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", textTransform: "uppercase", letterSpacing: 1, background: view === v ? `${accent}22` : "transparent", border: `1px solid ${view === v ? `${accent}44` : "transparent"}`, color: view === v ? accent : txm }}>{v}</button>)}
+        <Panel x={24} y={485} width={360} title="Calendar" icon="📅" light={light} onClose={onClose} ambient={ambient} accent={accent}>
+            {/* Header with view switcher and actions */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <div style={{ display: "flex", gap: 4, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.05)", borderRadius: 6, padding: 2 }}>
+                    {["week", "month", "list"].map(v => (
+                        <button key={v} onClick={() => setView(v)} style={{
+                            padding: "4px 10px",
+                            borderRadius: 5,
+                            fontSize: 10,
+                            cursor: "pointer",
+                            fontFamily: "'JetBrains Mono'",
+                            textTransform: "uppercase",
+                            letterSpacing: 0.5,
+                            background: view === v ? (light ? "#fff" : "rgba(255,255,255,0.15)") : "transparent",
+                            border: "none",
+                            color: view === v ? accent : txm,
+                            boxShadow: view === v ? (light ? "0 1px 3px rgba(0,0,0,0.1)" : "0 1px 3px rgba(0,0,0,0.3)") : "none",
+                            transition: "all 0.2s"
+                        }}>{v}</button>
+                    ))}
                 </div>
-                <div style={{ display: "flex", gap: 3 }}>
-                    <button onClick={() => setShowForm(f => !f)} style={{ padding: "2px 7px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: `${accent}15`, border: `1px solid ${accent}33`, color: accent }}>{showForm ? "Cancel" : "+ Event"}</button>
-                    <button onClick={exportICS} style={{ padding: "2px 7px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: "transparent", border: `1px solid ${light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.08)"}`, color: txm }}>.ics</button>
+                <div style={{ display: "flex", gap: 4 }}>
+                    <button onClick={() => openAddForm()} style={{
+                        padding: "4px 10px",
+                        borderRadius: 6,
+                        fontSize: 10,
+                        cursor: "pointer",
+                        fontFamily: "'JetBrains Mono'",
+                        background: `${accent}20`,
+                        border: `1px solid ${accent}40`,
+                        color: accent,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                        transition: "all 0.2s"
+                    }}><span>+</span> Event</button>
+                    <button onClick={exportICS} style={{
+                        padding: "4px 10px",
+                        borderRadius: 6,
+                        fontSize: 10,
+                        cursor: "pointer",
+                        fontFamily: "'JetBrains Mono'",
+                        background: "transparent",
+                        border: `1px solid ${light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`,
+                        color: txm,
+                        transition: "all 0.2s"
+                    }}>Export</button>
                 </div>
             </div>
+
+            {/* Add/Edit Form */}
             {showForm && (
-                <div className="anim-panel" style={{ marginBottom: 8, padding: 8, borderRadius: 8, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)", border: `1px solid ${light ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.05)"}` }} data-nodrag>
-                    <input value={formTitle} onChange={e => setFormTitle(e.target.value)} placeholder="Event title" onKeyDown={e => e.key === "Enter" && submitEvent()}
-                        style={{ width: "100%", background: "transparent", border: "none", outline: "none", fontSize: 11, color: tx, fontFamily: "'DM Sans'", marginBottom: 5 }} />
-                    <div style={{ display: "flex", gap: 4 }}>
-                        <input type="date" value={formDate} onChange={e => setFormDate(e.target.value)} style={{ flex: 1, background: "transparent", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, fontFamily: "'JetBrains Mono'", outline: "none", colorScheme: light ? "light" : "dark" }} />
-                        <input type="time" value={formTime} onChange={e => setFormTime(e.target.value)} style={{ width: 70, background: "transparent", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, fontFamily: "'JetBrains Mono'", outline: "none", colorScheme: light ? "light" : "dark" }} />
-                        <button onClick={submitEvent} style={{ background: `${accent}22`, border: `1px solid ${accent}44`, borderRadius: 4, padding: "2px 8px", fontSize: 10, cursor: "pointer", color: accent }}>Add</button>
+                <div className="anim-panel" style={{
+                    marginBottom: 12,
+                    padding: 12,
+                    borderRadius: 10,
+                    background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.05)",
+                    border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`
+                }} data-nodrag>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: tx }}>{selectedEvent ? "Edit Event" : "New Event"}</span>
+                        <button onClick={() => setShowForm(false)} style={{ background: "none", border: "none", color: txm, cursor: "pointer", fontSize: 14 }}>×</button>
+                    </div>
+                    <input
+                        value={formTitle}
+                        onChange={e => setFormTitle(e.target.value)}
+                        placeholder="Event title"
+                        onKeyDown={e => e.key === "Enter" && submitEvent()}
+                        style={{
+                            width: "100%",
+                            background: light ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.2)",
+                            border: `1px solid ${light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`,
+                            borderRadius: 6,
+                            outline: "none",
+                            fontSize: 12,
+                            color: tx,
+                            fontFamily: "'DM Sans'",
+                            padding: "6px 10px",
+                            marginBottom: 8
+                        }}
+                    />
+                    <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                        <div style={{ flex: 1 }}>
+                            <label style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", textTransform: "uppercase", letterSpacing: 0.5 }}>Date</label>
+                            <input type="date" value={formDate} onChange={e => setFormDate(e.target.value)} style={{
+                                width: "100%",
+                                background: light ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.2)",
+                                border: `1px solid ${light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`,
+                                borderRadius: 6,
+                                padding: "5px 8px",
+                                fontSize: 10,
+                                color: tx,
+                                fontFamily: "'JetBrains Mono'",
+                                outline: "none",
+                                marginTop: 3
+                            }} />
+                        </div>
+                        <div style={{ width: 80 }}>
+                            <label style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", textTransform: "uppercase", letterSpacing: 0.5 }}>Time</label>
+                            <input type="time" value={formTime} onChange={e => setFormTime(e.target.value)} style={{
+                                width: "100%",
+                                background: light ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.2)",
+                                border: `1px solid ${light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`,
+                                borderRadius: 6,
+                                padding: "5px 8px",
+                                fontSize: 10,
+                                color: tx,
+                                fontFamily: "'JetBrains Mono'",
+                                outline: "none",
+                                marginTop: 3
+                            }} />
+                        </div>
+                        <div style={{ width: 70 }}>
+                            <label style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", textTransform: "uppercase", letterSpacing: 0.5 }}>Duration</label>
+                            <select value={formDuration} onChange={e => setFormDuration(parseInt(e.target.value))} style={{
+                                width: "100%",
+                                background: light ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.2)",
+                                border: `1px solid ${light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`,
+                                borderRadius: 6,
+                                padding: "5px 8px",
+                                fontSize: 10,
+                                color: tx,
+                                fontFamily: "'JetBrains Mono'",
+                                outline: "none",
+                                marginTop: 3
+                            }}>
+                                <option value={15}>15m</option>
+                                <option value={30}>30m</option>
+                                <option value={60}>1h</option>
+                                <option value={90}>1.5h</option>
+                                <option value={120}>2h</option>
+                                <option value={180}>3h</option>
+                                <option value={240}>4h</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div style={{ marginBottom: 10 }}>
+                        <label style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", textTransform: "uppercase", letterSpacing: 0.5, display: "block", marginBottom: 4 }}>Color</label>
+                        <div style={{ display: "flex", gap: 6 }}>
+                            {evColors.map(c => (
+                                <button
+                                    key={c}
+                                    onClick={() => setFormColor(c)}
+                                    style={{
+                                        width: 22,
+                                        height: 22,
+                                        borderRadius: "50%",
+                                        background: c,
+                                        border: formColor === c ? `2px solid ${light ? "#2d3436" : "#fff"}` : "2px solid transparent",
+                                        cursor: "pointer",
+                                        transform: formColor === c ? "scale(1.1)" : "scale(1)",
+                                        transition: "all 0.2s"
+                                    }}
+                                />
+                            ))}
+                        </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                        {selectedEvent && (
+                            <button onClick={() => { onDeleteEvent(selectedEvent.id); setShowForm(false); }} style={{
+                                padding: "6px 12px",
+                                borderRadius: 6,
+                                fontSize: 10,
+                                cursor: "pointer",
+                                fontFamily: "'JetBrains Mono'",
+                                background: "rgba(231, 76, 60, 0.15)",
+                                border: "1px solid rgba(231, 76, 60, 0.3)",
+                                color: "#e74c3c"
+                            }}>Delete</button>
+                        )}
+                        <button onClick={submitEvent} style={{
+                            flex: 1,
+                            padding: "6px 12px",
+                            borderRadius: 6,
+                            fontSize: 10,
+                            cursor: "pointer",
+                            fontFamily: "'JetBrains Mono'",
+                            background: `${accent}25`,
+                            border: `1px solid ${accent}50`,
+                            color: accent,
+                            fontWeight: 600
+                        }}>{selectedEvent ? "Save Changes" : "Add Event"}</button>
                     </div>
                 </div>
             )}
-            {view === "week" && <div style={{ display: "flex", gap: 2 }}>
-                {week.map((d, i) => {
-                    const isT = i === 0, devs = evFor(d); return (
-                        <div key={i} style={{ flex: 1, textAlign: "center", padding: "5px 1px", borderRadius: 7, background: isT ? `${accent}15` : "transparent", border: isT ? `1px solid ${accent}33` : "1px solid transparent" }}>
-                            <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'" }}>{dN[d.getDay()]}</div>
-                            <div style={{ fontSize: 15, fontWeight: isT ? 700 : 400, color: tx, margin: "1px 0" }}>{d.getDate()}</div>
-                            {devs.map((ev, j) => <div key={j} style={{ width: 5, height: 5, borderRadius: "50%", background: ev.color || accent, margin: "1px auto 0" }} title={`${ev.title} ${ev.time}`} />)}
-                        </div>);
-                })}
-            </div>}
-            {view === "list" && <div style={{ maxHeight: 120, overflowY: "auto" }}>
-                {events.length === 0 && <div style={{ fontSize: 11, color: txm, fontStyle: "italic" }}>No events</div>}
-                {[...events].sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`)).map(ev => {
-                    const em = guessEmoji(ev.title);
-                    return <div key={ev.id} className="anim-item" style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0", borderBottom: `1px solid ${light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.03)"}` }}>
-                        <div style={{ width: 3, height: 22, borderRadius: 2, background: ev.color || accent, flexShrink: 0 }} />
-                        {em && <span style={{ fontSize: 11 }}>{em}</span>}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 11, fontWeight: 500, color: tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.title}</div>
-                            <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'" }}>{ev.date} · {ev.time}</div>
+
+            {/* Week View */}
+            {view === "week" && (
+                <div style={{ display: "flex", gap: 4 }}>
+                    {week.map((d, i) => {
+                        const isTodayDate = isToday(d);
+                        const dayEvents = evFor(d);
+                        const isPastDate = isPast(d);
+                        return (
+                            <div
+                                key={i}
+                                onClick={() => openAddForm(toLocalDateStr(d))}
+                                style={{
+                                    flex: 1,
+                                    textAlign: "center",
+                                    padding: "6px 3px",
+                                    borderRadius: 8,
+                                    background: isTodayDate ? `${accent}15` : (light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)"),
+                                    border: isTodayDate ? `1px solid ${accent}40` : `1px solid ${light ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.05)"}`,
+                                    cursor: "pointer",
+                                    transition: "all 0.2s",
+                                    opacity: isPastDate ? 0.6 : 1
+                                }}
+                            >
+                                <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", textTransform: "uppercase" }}>{dN[d.getDay()]}</div>
+                                <div style={{
+                                    fontSize: 16,
+                                    fontWeight: isTodayDate ? 700 : 500,
+                                    color: isTodayDate ? accent : tx,
+                                    margin: "2px 0 6px"
+                                }}>{d.getDate()}</div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 2, minHeight: 20 }}>
+                                    {dayEvents.slice(0, 3).map((ev, j) => (
+                                        <div
+                                            key={j}
+                                            onClick={(e) => { e.stopPropagation(); openEditForm(ev); }}
+                                            style={{
+                                                padding: "2px 4px",
+                                                borderRadius: 3,
+                                                background: `${ev.color || accent}25`,
+                                                border: `1px solid ${ev.color || accent}40`,
+                                                fontSize: 7,
+                                                color: tx,
+                                                overflow: "hidden",
+                                                textOverflow: "ellipsis",
+                                                whiteSpace: "nowrap",
+                                                cursor: "pointer",
+                                                transition: "all 0.2s"
+                                            }}
+                                            title={`${ev.title} (${ev.time}${ev.duration ? `, ${formatDuration(ev.duration)}` : ""})`}
+                                        >
+                                            {ev.time} {ev.title}
+                                        </div>
+                                    ))}
+                                    {dayEvents.length > 3 && (
+                                        <div style={{ fontSize: 7, color: txm, fontFamily: "'JetBrains Mono'" }}>+{dayEvents.length - 3} more</div>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+
+            {/* Month View */}
+            {view === "month" && (
+                <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                        <button onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))} style={{
+                            background: "none",
+                            border: "none",
+                            color: txm,
+                            cursor: "pointer",
+                            fontSize: 14,
+                            padding: "2px 8px",
+                            borderRadius: 4,
+                            transition: "all 0.2s"
+                        }}>‹</button>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: tx, fontFamily: "'DM Sans'" }}>
+                            {mN[currentMonth.getMonth()]} {currentMonth.getFullYear()}
+                        </span>
+                        <button onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))} style={{
+                            background: "none",
+                            border: "none",
+                            color: txm,
+                            cursor: "pointer",
+                            fontSize: 14,
+                            padding: "2px 8px",
+                            borderRadius: 4,
+                            transition: "all 0.2s"
+                        }}>›</button>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, marginBottom: 4 }}>
+                        {dN.map(d => (
+                            <div key={d} style={{ textAlign: "center", fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", padding: "4px 0" }}>{d}</div>
+                        ))}
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+                        {getMonthDays().map((d, i) => {
+                            if (!d) return <div key={i} style={{ aspectRatio: 1 }} />;
+                            const isTodayDate = isToday(d);
+                            const dayEvents = evFor(d);
+                            const isPastDate = isPast(d);
+                            return (
+                                <div
+                                    key={i}
+                                    onClick={() => openAddForm(toLocalDateStr(d))}
+                                    style={{
+                                        aspectRatio: 1,
+                                        padding: 3,
+                                        borderRadius: 6,
+                                        background: isTodayDate ? `${accent}20` : (light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)"),
+                                        border: isTodayDate ? `1px solid ${accent}50` : "1px solid transparent",
+                                        cursor: "pointer",
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        alignItems: "center",
+                                        transition: "all 0.2s",
+                                        opacity: isPastDate ? 0.5 : 1
+                                    }}
+                                >
+                                    <span style={{
+                                        fontSize: 10,
+                                        fontWeight: isTodayDate ? 700 : 400,
+                                        color: isTodayDate ? accent : tx,
+                                        marginBottom: 2
+                                    }}>{d.getDate()}</span>
+                                    <div style={{ display: "flex", gap: 1, flexWrap: "wrap", justifyContent: "center" }}>
+                                        {dayEvents.slice(0, 3).map((ev, j) => (
+                                            <div
+                                                key={j}
+                                                onClick={(e) => { e.stopPropagation(); openEditForm(ev); }}
+                                                style={{
+                                                    width: 5,
+                                                    height: 5,
+                                                    borderRadius: "50%",
+                                                    background: ev.color || accent,
+                                                    cursor: "pointer"
+                                                }}
+                                                title={ev.title}
+                                            />
+                                        ))}
+                                        {dayEvents.length > 3 && (
+                                            <span style={{ fontSize: 6, color: txm }}>+</span>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+
+            {/* List View */}
+            {view === "list" && (
+                <div style={{ maxHeight: 200, overflowY: "auto" }}>
+                    {events.length === 0 && (
+                        <div style={{ textAlign: "center", padding: "20px 0", color: txm, fontStyle: "italic", fontSize: 12 }}>
+                            No events scheduled
                         </div>
-                        <button onClick={() => onDeleteEvent(ev.id)} style={{ background: "none", border: "none", color: txm, cursor: "pointer", fontSize: 10, lineHeight: 1, flexShrink: 0 }}>×</button>
-                    </div>;
-                })}
-            </div>}
+                    )}
+                    {Object.entries(groupEventsByDate()).map(([date, dayEvents]) => {
+                        const [y, mo, day] = date.split("-").map(Number);
+                        const d = new Date(y, mo - 1, day);
+                        const isTodayDate = isToday(d);
+                        const isPastDate = d < new Date(new Date().setHours(0, 0, 0, 0));
+                        return (
+                            <div key={date} style={{ marginBottom: 10 }}>
+                                <div style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 6,
+                                    padding: "4px 0",
+                                    borderBottom: `1px solid ${light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.06)"}`,
+                                    marginBottom: 6
+                                }}>
+                                    <span style={{
+                                        fontSize: 11,
+                                        fontWeight: 600,
+                                        color: isTodayDate ? accent : tx,
+                                        fontFamily: "'DM Sans'"
+                                    }}>
+                                        {isTodayDate ? "Today" : dNF[d.getDay()]}
+                                    </span>
+                                    <span style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>
+                                        {date}
+                                    </span>
+                                    {isPastDate && !isTodayDate && (
+                                        <span style={{ fontSize: 7, color: txm, textTransform: "uppercase", letterSpacing: 0.5 }}>Past</span>
+                                    )}
+                                </div>
+                                {dayEvents.map(ev => {
+                                    const em = guessEmoji(ev.title);
+                                    return (
+                                        <div
+                                            key={ev.id}
+                                            onClick={() => openEditForm(ev)}
+                                            className="anim-item"
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 8,
+                                                padding: "6px 8px",
+                                                marginBottom: 4,
+                                                borderRadius: 6,
+                                                background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)",
+                                                border: `1px solid ${light ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)"}`,
+                                                cursor: "pointer",
+                                                transition: "all 0.2s",
+                                                opacity: isPastDate && !isTodayDate ? 0.6 : 1
+                                            }}
+                                        >
+                                            <div style={{
+                                                width: 3,
+                                                height: 28,
+                                                borderRadius: 2,
+                                                background: ev.color || accent,
+                                                flexShrink: 0
+                                            }} />
+                                            <div style={{
+                                                width: 40,
+                                                textAlign: "center",
+                                                fontSize: 10,
+                                                color: txm,
+                                                fontFamily: "'JetBrains Mono'"
+                                            }}>
+                                                {ev.time}
+                                            </div>
+                                            {em && <span style={{ fontSize: 12 }}>{em}</span>}
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{
+                                                    fontSize: 11,
+                                                    fontWeight: 500,
+                                                    color: tx,
+                                                    overflow: "hidden",
+                                                    textOverflow: "ellipsis",
+                                                    whiteSpace: "nowrap"
+                                                }}>{ev.title}</div>
+                                                {ev.duration && (
+                                                    <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'" }}>
+                                                        {formatDuration(ev.duration)}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); onDeleteEvent(ev.id); }}
+                                                style={{
+                                                    background: "none",
+                                                    border: "none",
+                                                    color: txm,
+                                                    cursor: "pointer",
+                                                    fontSize: 14,
+                                                    lineHeight: 1,
+                                                    flexShrink: 0,
+                                                    padding: "2px 6px",
+                                                    borderRadius: 4,
+                                                    transition: "all 0.2s"
+                                                }}
+                                            >×</button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
         </Panel>
     );
 }
@@ -654,7 +1135,7 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     const [showInsights, setShowInsights] = useState(false);
     const [desc, setDesc] = useState(""), [amt, setAmt] = useState(""), [cat, setCat] = useState("other");
     const [error, setError] = useState("");
-    const [expenseDate, setExpenseDate] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; });
+    const [expenseDate, setExpenseDate] = useState(() => toLocalDateStr(new Date()));
     const [insightsPeriod, setInsightsPeriod] = useState("weekly"); // "weekly" or "monthly"
     const [chartType, setChartType] = useState("histogram"); // "histogram" or "line"
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
@@ -686,7 +1167,7 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
         onAddExpense(descTrimmed, amtNum, cat, expenseDate);
         setDesc("");
         setAmt("");
-        setExpenseDate(new Date().toISOString().split('T')[0]);
+        setExpenseDate(toLocalDateStr(new Date()));
         setError("");
         setShowForm(false);
     };
@@ -791,8 +1272,6 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
                     const exDate = parseLocalDate(ex.date);
                     const dateStr = exDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
                     const isToday = exDate.toDateString() === today.toDateString();
-                    const dateStr = expenseDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                    const isToday = expenseDate.toDateString() === today.toDateString();
                     return (
                         <div key={ex.id} style={{ display: "flex", alignItems: "center", gap: 5, padding: "2px 0", borderBottom: `1px solid ${light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.03)"}` }}>
                             <span style={{ fontSize: 9 }}>{catI[ex.category]}</span>
@@ -1609,13 +2088,13 @@ export default function App() {
     ]);
     const [timers, setTimers] = useState([]), [widgets, setWidgets] = useState([]);
     const [events, setEvents] = useState([
-        { id: "e1", title: "Lecture block 📚", date: new Date().toISOString().split("T")[0], time: "10:00", duration: 60, color: "#6c5ce7" },
-        { id: "e2", title: "Team checkpoint 👥", date: (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split("T")[0]; })(), time: "15:00", duration: 45, color: "#00cec9" },
+        { id: "e1", title: "Lecture block 📚", date: toLocalDateStr(new Date()), time: "10:00", duration: 60, color: "#6c5ce7" },
+        { id: "e2", title: "Team checkpoint 👥", date: (() => { const d = new Date(); d.setDate(d.getDate() + 1); return toLocalDateStr(d); })(), time: "15:00", duration: 45, color: "#00cec9" },
     ]);
     const [expenses, setExpenses] = useState([
-        { id: "x1", description: "Coffee ☕", amount: 4.50, category: "food", date: new Date().toISOString() },
-        { id: "x2", description: "Bus fare 🚍", amount: 20, category: "transport", date: new Date(Date.now() - 86400000).toISOString() },
-        { id: "x3", description: "Library lunch 🥪", amount: 8.90, category: "food", date: new Date(Date.now() - 172800000).toISOString() }
+        { id: "x1", description: "Coffee ☕", amount: 4.50, category: "food", date: toLocalDateStr(new Date()) },
+        { id: "x2", description: "Bus fare 🚍", amount: 20, category: "transport", date: (() => { const d = new Date(); d.setDate(d.getDate() - 1); return toLocalDateStr(d); })() },
+        { id: "x3", description: "Library lunch 🥪", amount: 8.90, category: "food", date: (() => { const d = new Date(); d.setDate(d.getDate() - 2); return toLocalDateStr(d); })() }
     ]);
     const [budget, setBudgetVal] = useState(500);
     const [weeklyGoalCategory, setWeeklyGoalCategory] = useState("tasks");
@@ -1669,8 +2148,8 @@ export default function App() {
             if (safe.length) exec(safe);
         });
     };
-    const manualAddEvent = (title, date, time, color) => {
-        setEvents(p => [...p, { id: gid(), title, date, time, duration: 60, color }]);
+    const manualAddEvent = (title, date, time, duration = 60, color) => {
+        setEvents(p => [...p, { id: gid(), title, date, time, duration, color }]);
         const inferred = inferMood(title, [{ type: "add_event" }]);
         if (inferred) setLennyMood(inferred);
         callAmbientLLM(`User added event: "${title}" on ${date}. Emotional weight?`).then(r => {
@@ -1678,8 +2157,11 @@ export default function App() {
             if (safe.length) exec(safe);
         });
     };
+    const manualEditEvent = (id, title, date, time, duration, color) => {
+        setEvents(p => p.map(ev => ev.id === id ? { ...ev, title, date, time, duration, color } : ev));
+    };
     const manualAddExpense = (desc, amount, category, date) => {
-        const expenseDate = date || new Date().toISOString().split('T')[0];
+        const expenseDate = date || toLocalDateStr(new Date());
         setExpenses(p => [...p, { id: gid(), description: desc, amount: parseFloat(amount), category, date: expenseDate }]);
     };
 
@@ -1708,9 +2190,9 @@ export default function App() {
             else if (t === "change_theme" && themes[a.theme]) { setBg(themes[a.theme].bg); setAccent(themes[a.theme].accent); }
             else if (t === "set_greeting" && a.text) setGreeting(a.text);
             else if (t === "add_widget" && a.widgetType) setWidgets(p => [...p, { id: gid(), type: a.widgetType }]);
-            else if (t === "add_event") setEvents(p => [...p, { id: gid(), title: a.title || "Event", date: a.date || new Date().toISOString().split("T")[0], time: a.time || "09:00", duration: Number(a.duration) || 60, color: a.color || "#6c5ce7" }]);
+            else if (t === "add_event") setEvents(p => [...p, { id: gid(), title: a.title || "Event", date: a.date || toLocalDateStr(new Date()), time: a.time || "09:00", duration: Number(a.duration) || 60, color: a.color || "#6c5ce7" }]);
             else if (t === "delete_event" && a.title) setEvents(p => p.filter(e => !String(e.title).toLowerCase().includes(String(a.title).toLowerCase())));
-            else if (t === "add_expense") setExpenses(p => [...p, { id: gid(), description: a.description || "Expense", amount: Number(a.amount) || 0, category: a.category || "other", date: new Date().toISOString() }]);
+            else if (t === "add_expense") setExpenses(p => [...p, { id: gid(), description: a.description || "Expense", amount: Number(a.amount) || 0, category: a.category || "other", date: a.date || toLocalDateStr(new Date()) }]);
             else if (t === "add_note") setPostits(p => {
                 const pos = getNextPostitPosition(p.length);
                 return [
@@ -1982,7 +2464,7 @@ export default function App() {
 
                 <HeaderLockCtx.Provider value={headerLockY}>
                 {showTasks && <TasksPanel tasks={tasks} onToggle={id => setTasks(t => t.map(tk => tk.id === id ? { ...tk, done: !tk.done } : tk))} onEditTask={(id, v) => setTasks(t => t.map(tk => tk.id === id ? { ...tk, text: v } : tk))} onRequestSplit={t => send(`split the task "${t}" into subtasks`)} onAddTask={manualAddTask} accent={accent} light={light} onClose={() => setShowTasks(false)} ambient={ambient} />}
-                {showCal && <CalendarPanel events={events} onDeleteEvent={id => setEvents(e => e.filter(ev => ev.id !== id))} onAddEvent={manualAddEvent} accent={accent} light={light} onClose={() => setShowCal(false)} ambient={ambient} />}
+                {showCal && <CalendarPanel events={events} onDeleteEvent={id => setEvents(e => e.filter(ev => ev.id !== id))} onAddEvent={manualAddEvent} onEditEvent={manualEditEvent} accent={accent} light={light} onClose={() => setShowCal(false)} ambient={ambient} />}
                 {showBudget && <BudgetPanel expenses={expenses} budget={budget} accent={accent} light={light} onClose={() => setShowBudget(false)} onDeleteExpense={id => setExpenses(e => e.filter(ex => ex.id !== id))} onAddExpense={manualAddExpense} ambient={ambient} />}
                 {showRewards && <RewardsPanel weeklyGoalCategory={weeklyGoalCategory} setWeeklyGoalCategory={setWeeklyGoalCategory} weeklyGoalTarget={weeklyGoalTarget} setWeeklyGoalTarget={setWeeklyGoalTarget} weeklyGoalProgress={weeklyGoalProgress} weeklyGoalLabel={activeWeeklyGoal.label} weeklyGoalHelper={weeklyGoalHelper} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" />}
                 {showWeather && <WeatherWidget light={light} accent={accent} ambient={ambient} onClose={() => setShowWeather(false)} />}
@@ -2086,3 +2568,9 @@ export default function App() {
         </div>
     </>;
 }
+// ═══════════════════════════════════════════════════
+// APP WRAPPER
+// ═══════════════════════════════════════════════════
+// export default function App() {
+//     return <Dashboard />;
+// }
