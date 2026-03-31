@@ -848,7 +848,7 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
                                     <div style={{ 
                                         width: 22, 
                                         height: `${Math.max((d.amount / maxChartAmount) * 20, 2)}px`, 
-                                        background: d.amount === Math.max(...chartData.map(x => x.amount)) ? accent : light ? "rgba(0,0,0,0.2)" : "rgba(255,255,255,0.3)",
+                                        background: d.amount > 0 && d.amount === maxChartAmount ? accent : light ? "rgba(0,0,0,0.2)" : "rgba(255,255,255,0.3)",
                                         borderRadius: 2,
                                         transition: "all 0.3s"
                                     }} />
