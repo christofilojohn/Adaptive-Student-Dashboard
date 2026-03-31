@@ -224,22 +224,119 @@ async function callAmbientLLM(contextMsg) {
 // Shared context so every draggable knows how tall the locked header area is
 const HeaderLockCtx = createContext(0);
 
+const WidgetRegistryCtx = createContext(null);
+
+const SNAP_GRID = 20;
+const SNAP_EDGE_THRESHOLD = 18;
+
+function snapPos(rawX, rawY, thisId, registry, dragRef, minY) {
+    let x = rawX;
+    let y = Math.max(minY, rawY);
+    const el = dragRef?.current;
+
+    x = Math.round(x / SNAP_GRID) * SNAP_GRID;
+    y = Math.max(minY, Math.round(y / SNAP_GRID) * SNAP_GRID);
+
+    if (!el || !registry?.current) return { x, y };
+
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+
+    let bestXSnap = null;
+    let bestYSnap = null;
+    let bestXDist = SNAP_EDGE_THRESHOLD;
+    let bestYDist = SNAP_EDGE_THRESHOLD;
+
+    registry.current.forEach((entry, id) => {
+        if (id === thisId || !entry.el) return;
+        const ox = entry.x;
+        const oy = entry.y;
+        const ow = entry.el.offsetWidth;
+        const oh = entry.el.offsetHeight;
+        const d1x = Math.abs(x - (ox + ow));
+        const d2x = Math.abs((x + w) - ox);
+        if (d1x < bestXDist) { bestXDist = d1x; bestXSnap = ox + ow; }
+        if (d2x < bestXDist) { bestXDist = d2x; bestXSnap = ox - w; }
+        const d1y = Math.abs(y - (oy + oh));
+        const d2y = Math.abs((y + h) - oy);
+        if (d1y < bestYDist) { bestYDist = d1y; bestYSnap = oy + oh; }
+        if (d2y < bestYDist) { bestYDist = d2y; bestYSnap = oy - h; }
+    });
+
+    if (bestXSnap !== null) x = bestXSnap;
+    if (bestYSnap !== null) y = bestYSnap;
+
+    let resolved = false;
+    let iterations = 0;
+            while (!resolved && iterations++ < 5) {
+                resolved = true;
+                registry.current.forEach((entry, id) => {
+                    if (id === thisId || !entry.el) return;
+                    const ox = entry.x;
+                    const oy = entry.y;
+                    const ow = entry.el.offsetWidth;
+                    const oh = entry.el.offsetHeight;
+                    if (x < ox + ow && x + w > ox && y < oy + oh && y + h > oy) {
+                        resolved = false;
+                        const pushR = (ox + ow) - x;
+                        const pushL = (x + w) - ox;
+                        const pushD = (oy + oh) - y;
+                        const pushU = (y + h) - oy;
+                        const minPush = Math.min(pushR, pushL, pushD, pushU);
+                        if (minPush === pushR) x = ox + ow;
+                        else if (minPush === pushL) x = ox - w;
+                        else if (minPush === pushD) y = oy + oh;
+                        else y = Math.max(minY, oy - h);
+                    }
+                });
+            }
+
+    return { x, y: Math.max(minY, y) };
+}
+
 function useDraggable(ix, iy) {
     const minY = useContext(HeaderLockCtx);
+    const registry = useContext(WidgetRegistryCtx);
     const minYRef = useRef(minY);
+    const dragRef = useRef(null);
+    const idRef = useRef(`w_${Math.random().toString(36).slice(2)}`);
     useEffect(() => { minYRef.current = minY; }, [minY]);
     const [pos, setPos] = useState({ x: ix, y: Math.max(minY, iy) });
     const dr = useRef(false), off = useRef({ x: 0, y: 0 });
+
+    useEffect(() => {
+        if (!registry) return;
+        registry.current.set(idRef.current, { x: pos.x, y: pos.y, el: dragRef.current });
+        return () => { registry.current.delete(idRef.current); };
+    }, [registry]);
+
+    useEffect(() => {
+        if (!registry) return;
+        const entry = registry.current.get(idRef.current);
+        if (entry) {
+            entry.x = pos.x;
+            entry.y = pos.y;
+            entry.el = dragRef.current;
+        }
+    }, [pos, registry]);
+
     const onMouseDown = useCallback((e) => {
         if (e.target.closest("button, input, textarea, select, a, [data-nodrag]")) return;
         e.preventDefault(); dr.current = true; off.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
         const mv = ev => {
-            if (dr.current) setPos({ x: ev.clientX - off.current.x, y: Math.max(minYRef.current, ev.clientY - off.current.y) });
+            if (!dr.current) return;
+            const rawX = ev.clientX - off.current.x;
+            const rawY = ev.clientY - off.current.y;
+            if (ev.altKey) {
+                setPos({ x: rawX, y: Math.max(minYRef.current, rawY) });
+            } else {
+                setPos(snapPos(rawX, rawY, idRef.current, registry, dragRef, minYRef.current));
+            }
         };
         const up = () => { dr.current = false; window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
         window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
-    }, [pos.x, pos.y]);
-    return { pos, onMouseDown };
+    }, [pos.x, pos.y, registry]);
+    return { pos, onMouseDown, dragRef };
 }
 
 function EditableText({ value, onChange, maxLen, style, multiline }) {
@@ -447,7 +544,7 @@ function LennyBuddy({ mood, glowColor, light, loading }) {
 // COMPONENTS
 // ═══════════════════════════════════════════════════
 function Panel({ children, x, y, width, title, icon, onClose, ambient, light, accent = "#8b5cf6" }) {
-    const { pos, onMouseDown } = useDraggable(x, y);
+    const { pos, onMouseDown, dragRef } = useDraggable(x, y);
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     const bw = ambient.borderWarmth || 0;
     const borderCol = light ? `rgba(${Math.round(80 + bw * 80)},${Math.round(60 + bw * 40)},50,0.1)` : `rgba(${Math.round(255 * (0.3 + bw * 0.3))},${Math.round(255 * (0.25 + bw * 0.15))},${Math.round(255 * 0.2)},${0.06 + bw * 0.06})`;
@@ -459,7 +556,7 @@ function Panel({ children, x, y, width, title, icon, onClose, ambient, light, ac
     const headerTint = light ? `${accent}10` : `${accent}12`;
 
     return (
-        <div className="panel-shell" onMouseDown={onMouseDown} style={{
+        <div ref={dragRef} className="panel-shell" onMouseDown={onMouseDown} style={{
             position: "absolute", left: pos.x, top: pos.y, width, background: `linear-gradient(135deg, ${panelBg}, ${reflectCol})`,
             backdropFilter: `blur(${ambient.panelBlur || 20}px)`, border: `1px solid ${borderCol}`, borderTop: `1px solid ${accentBorder}`, borderRadius: 14, cursor: "grab", zIndex: 15,
             boxShadow: `0 8px 32px rgba(0,0,0,0.18), 0 0 0 1px ${accentGlow}, inset 0 1px 0 ${light ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.04)"}`,
@@ -478,11 +575,11 @@ function Panel({ children, x, y, width, title, icon, onClose, ambient, light, ac
 }
 
 function PostIt({ id, content, color, initialX, initialY, onRemove, onEdit }) {
-    const { pos, onMouseDown } = useDraggable(initialX, initialY);
+    const { pos, onMouseDown, dragRef } = useDraggable(initialX, initialY);
     const rot = useRef((-3 + Math.random() * 6).toFixed(1));
     const em = guessEmoji(content);
     return (
-        <div className="panel-shell" onMouseDown={onMouseDown} style={{
+        <div ref={dragRef} className="panel-shell" onMouseDown={onMouseDown} style={{
             position: "absolute", left: pos.x, top: pos.y, width: 175, minHeight: 95,
             background: color || "#fef68a", borderRadius: 3, padding: "24px 12px 12px", cursor: "grab",
             transform: `rotate(${rot.current}deg)`, zIndex: 12, boxShadow: "2px 4px 18px rgba(0,0,0,0.22), inset 0 -2px 4px rgba(0,0,0,0.05)",
@@ -498,11 +595,11 @@ function PostIt({ id, content, color, initialX, initialY, onRemove, onEdit }) {
 
 function TimerWidget({ id, minutes, label, onRemove, light }) {
     const [left, setLeft] = useState(minutes * 60), [run, setRun] = useState(true);
-    const { pos, onMouseDown } = useDraggable(420 + Math.random() * 150, 40 + Math.random() * 100);
+    const { pos, onMouseDown, dragRef } = useDraggable(420 + Math.random() * 150, 40 + Math.random() * 100);
     useEffect(() => { if (!run || left <= 0) return; const t = setInterval(() => setLeft(s => Math.max(0, s - 1)), 1000); return () => clearInterval(t); }, [run, left]);
     const done = left <= 0, pct = 1 - left / (minutes * 60);
     const c = light ? { bg: "rgba(255,255,255,0.65)", bd: "rgba(0,0,0,0.08)", tx: "#2d3436", txm: "rgba(45,52,54,0.4)" } : { bg: "rgba(255,255,255,0.04)", bd: "rgba(255,255,255,0.08)", tx: "#fff", txm: "rgba(255,255,255,0.4)" };
-    return <div onMouseDown={onMouseDown} style={{ position: "absolute", left: pos.x, top: pos.y, minWidth: 150, background: done ? "rgba(231,76,60,0.12)" : c.bg, backdropFilter: "blur(16px)", border: `1px solid ${done ? "rgba(231,76,60,0.35)" : c.bd}`, borderRadius: 14, padding: "12px 16px", cursor: "grab", zIndex: 12, boxShadow: "0 6px 24px rgba(0,0,0,0.18)", userSelect: "none", animation: "panelIn 0.3s ease-out" }}>
+    return <div ref={dragRef} onMouseDown={onMouseDown} style={{ position: "absolute", left: pos.x, top: pos.y, minWidth: 150, background: done ? "rgba(231,76,60,0.12)" : c.bg, backdropFilter: "blur(16px)", border: `1px solid ${done ? "rgba(231,76,60,0.35)" : c.bd}`, borderRadius: 14, padding: "12px 16px", cursor: "grab", zIndex: 12, boxShadow: "0 6px 24px rgba(0,0,0,0.18)", userSelect: "none", animation: "panelIn 0.3s ease-out" }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
             <span style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: 2, color: c.txm, fontFamily: "'JetBrains Mono'" }}>⏱ {label}</span>
             <button onClick={e => { e.stopPropagation(); onRemove(id); }} style={{ background: "none", border: "none", color: "rgba(128,128,128,0.4)", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>×</button>
@@ -519,10 +616,10 @@ function TimerWidget({ id, minutes, label, onRemove, light }) {
 
 function ClockWidget({ id, onRemove, light }) {
     const [now, setNow] = useState(new Date());
-    const { pos, onMouseDown } = useDraggable(450 + Math.random() * 100, 180 + Math.random() * 80);
+    const { pos, onMouseDown, dragRef } = useDraggable(450 + Math.random() * 100, 180 + Math.random() * 80);
     useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
     const c = light ? { bg: "rgba(255,255,255,0.65)", bd: "rgba(0,0,0,0.08)", tx: "#2d3436", txm: "rgba(45,52,54,0.3)" } : { bg: "rgba(255,255,255,0.04)", bd: "rgba(255,255,255,0.08)", tx: "#fff", txm: "rgba(255,255,255,0.3)" };
-    return <div onMouseDown={onMouseDown} style={{ position: "absolute", left: pos.x, top: pos.y, background: c.bg, backdropFilter: "blur(20px)", border: `1px solid ${c.bd}`, borderRadius: 18, padding: "16px 24px", cursor: "grab", userSelect: "none", zIndex: 12, boxShadow: "0 6px 24px rgba(0,0,0,0.15)" }}>
+    return <div ref={dragRef} onMouseDown={onMouseDown} style={{ position: "absolute", left: pos.x, top: pos.y, background: c.bg, backdropFilter: "blur(20px)", border: `1px solid ${c.bd}`, borderRadius: 18, padding: "16px 24px", cursor: "grab", userSelect: "none", zIndex: 12, boxShadow: "0 6px 24px rgba(0,0,0,0.15)" }}>
         <button onClick={e => { e.stopPropagation(); onRemove(id); }} style={{ position: "absolute", top: 5, right: 9, background: "none", border: "none", color: "rgba(128,128,128,0.3)", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>×</button>
         <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 34, fontWeight: 200, color: c.tx, letterSpacing: 3 }}>{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</div>
         <div style={{ fontFamily: "'DM Sans'", fontSize: 10, color: c.txm, textAlign: "center", marginTop: 2 }}>{now.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })}</div>
@@ -532,9 +629,9 @@ function ClockWidget({ id, onRemove, light }) {
 function QuoteWidget({ id, onRemove, light }) {
     const qs = [{ t: "The only way to do great work is to love what you do.", a: "Jobs" }, { t: "What stands in the way becomes the way.", a: "Aurelius" }, { t: "Simplicity is the ultimate sophistication.", a: "Da Vinci" }, { t: "Everything you can imagine is real.", a: "Picasso" }];
     const q = useRef(qs[Math.floor(Math.random() * qs.length)]);
-    const { pos, onMouseDown } = useDraggable(400 + Math.random() * 200, 300 + Math.random() * 80);
+    const { pos, onMouseDown, dragRef } = useDraggable(400 + Math.random() * 200, 300 + Math.random() * 80);
     const c = light ? { bg: "rgba(255,255,255,0.65)", bd: "rgba(0,0,0,0.06)", tx: "rgba(45,52,54,0.8)", txm: "rgba(45,52,54,0.3)" } : { bg: "rgba(255,255,255,0.03)", bd: "rgba(255,255,255,0.06)", tx: "rgba(255,255,255,0.8)", txm: "rgba(255,255,255,0.3)" };
-    return <div onMouseDown={onMouseDown} style={{ position: "absolute", left: pos.x, top: pos.y, maxWidth: 250, background: c.bg, backdropFilter: "blur(20px)", border: `1px solid ${c.bd}`, borderRadius: 14, padding: "18px 20px", cursor: "grab", userSelect: "none", zIndex: 12, boxShadow: "0 6px 24px rgba(0,0,0,0.15)" }}>
+    return <div ref={dragRef} onMouseDown={onMouseDown} style={{ position: "absolute", left: pos.x, top: pos.y, maxWidth: 250, background: c.bg, backdropFilter: "blur(20px)", border: `1px solid ${c.bd}`, borderRadius: 14, padding: "18px 20px", cursor: "grab", userSelect: "none", zIndex: 12, boxShadow: "0 6px 24px rgba(0,0,0,0.15)" }}>
         <button onClick={e => { e.stopPropagation(); onRemove(id); }} style={{ position: "absolute", top: 5, right: 9, background: "none", border: "none", color: "rgba(128,128,128,0.25)", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>×</button>
         <div style={{ fontFamily: "'Caveat', cursive", fontSize: 17, color: c.tx, lineHeight: 1.5, fontStyle: "italic" }}>"{q.current.t}"</div>
         <div style={{ fontFamily: "'DM Sans'", fontSize: 10, color: c.txm, marginTop: 5, textAlign: "right" }}>— {q.current.a}</div>
@@ -2112,6 +2209,7 @@ export default function App() {
     const [msgs, setMsgs] = useState([{ role: "assistant", text: `Ready! (${LLM_CONFIG.mode === "local" ? "local LLM" : "API"})\n\n• "make it cozy"\n• "check off documentation"\n• "meeting this friday 2pm"\n• "I spent €12 on lunch"\n• "focus mode"` }]);
 
     const scrollRef = useRef(null), inputRef = useRef(null), idRef = useRef(300), ambientTimerRef = useRef(null);
+    const widgetRegistry = useRef(new Map());
     const headerRef = useRef(null);
     const [headerLockY, setHeaderLockY] = useState(0);
     useEffect(() => {
@@ -2367,7 +2465,8 @@ export default function App() {
         setSelectedPostitId(cur => cur === id ? null : cur);
     };
 
-    return <>
+    return <WidgetRegistryCtx.Provider value={widgetRegistry}>
+        <>
         <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,700;1,400&family=JetBrains+Mono:wght@200;400;600;700&display=swap" rel="stylesheet" />
         <style>{`
             @keyframes bk{0%,60%,100%{transform:translateY(0);opacity:.3}30%{transform:translateY(-5px);opacity:.8}}
@@ -2574,7 +2673,8 @@ export default function App() {
                 </div>
             </div>
         </div>
-    </>;
+        </>
+    </WidgetRegistryCtx.Provider>;
 }
 // ═══════════════════════════════════════════════════
 // APP WRAPPER
