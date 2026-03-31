@@ -292,6 +292,7 @@ function snapPos(rawX, rawY, thisId, registry, dragRef, minY) {
             }
 
     return { x, y: Math.max(minY, y) };
+}
 
 function useDraggable(ix, iy) {
     const minY = useContext(HeaderLockCtx);
