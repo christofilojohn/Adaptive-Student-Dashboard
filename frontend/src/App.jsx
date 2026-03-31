@@ -21,6 +21,13 @@ const TIMETABLE_HOURS = Array.from({ length: 13 }, (_, i) => `${(i + 8).toString
 const WEEK_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday"];
 const WEEK_DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
+const toLocalDateStr = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+};
+
 // ═══════════════════════════════════════════════════
 // SMART EMOJI GUESSER
 // ═══════════════════════════════════════════════════
@@ -69,7 +76,7 @@ function guessEmoji(text) {
 // DATE AWARENESS
 // ═══════════════════════════════════════════════════
 function buildDateContext() {
-    const now = new Date(), iso = (d) => d.toISOString().split("T")[0];
+    const now = new Date(), iso = (d) => toLocalDateStr(d);
     const dn = (d) => ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][d.getDay()];
     const ad = (d, n) => { const r = new Date(d); r.setDate(r.getDate() + n); return r; };
     const dow = now.getDay();
@@ -590,7 +597,7 @@ function CalendarPanel({ events, onDeleteEvent, onAddEvent, onEditEvent, accent,
     const dNF = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
     const mN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     const week = Array.from({ length: 7 }, (_, i) => { const d = new Date(today); d.setDate(d.getDate() + i); return d; });
-    const evFor = d => events.filter(e => e.date === d.toISOString().split("T")[0]).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+    const evFor = d => events.filter(e => e.date === toLocalDateStr(d)).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
     const evColors = ["#6c5ce7", "#00cec9", "#e17055", "#00b894", "#fdcb6e", "#e84393", "#74b9ff", "#a29bfe"];
 
     const exportICS = () => {
@@ -605,7 +612,7 @@ function CalendarPanel({ events, onDeleteEvent, onAddEvent, onEditEvent, accent,
     const openAddForm = (date = null, time = "09:00") => {
         setSelectedEvent(null);
         setFormTitle("");
-        setFormDate(date || today.toISOString().split("T")[0]);
+        setFormDate(date || toLocalDateStr(today));
         setFormTime(time);
         setFormDuration(60);
         setFormColor(evColors[Math.floor(Math.random() * evColors.length)]);
@@ -664,7 +671,7 @@ function CalendarPanel({ events, onDeleteEvent, onAddEvent, onEditEvent, accent,
     };
 
     const isToday = (d) => d.toDateString() === today.toDateString();
-    const isPast = (d) => d < new Date(today.setHours(0, 0, 0, 0));
+    const isPast = (d) => d < new Date(new Date(today).setHours(0, 0, 0, 0));
 
     return (
         <Panel x={24} y={485} width={360} title="Calendar" icon="📅" light={light} onClose={onClose} ambient={ambient} accent={accent}>
@@ -863,7 +870,7 @@ function CalendarPanel({ events, onDeleteEvent, onAddEvent, onEditEvent, accent,
                         return (
                             <div
                                 key={i}
-                                onClick={() => openAddForm(d.toISOString().split("T")[0])}
+                                onClick={() => openAddForm(toLocalDateStr(d))}
                                 style={{
                                     flex: 1,
                                     textAlign: "center",
@@ -958,7 +965,7 @@ function CalendarPanel({ events, onDeleteEvent, onAddEvent, onEditEvent, accent,
                             return (
                                 <div
                                     key={i}
-                                    onClick={() => openAddForm(d.toISOString().split("T")[0])}
+                                    onClick={() => openAddForm(toLocalDateStr(d))}
                                     style={{
                                         aspectRatio: 1,
                                         padding: 3,
@@ -1872,8 +1879,8 @@ export default function App() {
     ]);
     const [timers, setTimers] = useState([]), [widgets, setWidgets] = useState([]);
     const [events, setEvents] = useState([
-        { id: "e1", title: "Lecture block 📚", date: new Date().toISOString().split("T")[0], time: "10:00", duration: 60, color: "#6c5ce7" },
-        { id: "e2", title: "Team checkpoint 👥", date: (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split("T")[0]; })(), time: "15:00", duration: 45, color: "#00cec9" },
+        { id: "e1", title: "Lecture block 📚", date: toLocalDateStr(new Date()), time: "10:00", duration: 60, color: "#6c5ce7" },
+        { id: "e2", title: "Team checkpoint 👥", date: (() => { const d = new Date(); d.setDate(d.getDate() + 1); return toLocalDateStr(d); })(), time: "15:00", duration: 45, color: "#00cec9" },
     ]);
     const [expenses, setExpenses] = useState([{ id: "x1", description: "Coffee ☕", amount: 4.50, category: "food" }, { id: "x2", description: "Bus fare 🚍", amount: 20, category: "transport" }, { id: "x3", description: "Library lunch 🥪", amount: 8.90, category: "food" }]);
     const [budget, setBudgetVal] = useState(500);
@@ -1969,7 +1976,7 @@ export default function App() {
             else if (t === "change_theme" && themes[a.theme]) { setBg(themes[a.theme].bg); setAccent(themes[a.theme].accent); }
             else if (t === "set_greeting" && a.text) setGreeting(a.text);
             else if (t === "add_widget" && a.widgetType) setWidgets(p => [...p, { id: gid(), type: a.widgetType }]);
-            else if (t === "add_event") setEvents(p => [...p, { id: gid(), title: a.title || "Event", date: a.date || new Date().toISOString().split("T")[0], time: a.time || "09:00", duration: Number(a.duration) || 60, color: a.color || "#6c5ce7" }]);
+            else if (t === "add_event") setEvents(p => [...p, { id: gid(), title: a.title || "Event", date: a.date || toLocalDateStr(new Date()), time: a.time || "09:00", duration: Number(a.duration) || 60, color: a.color || "#6c5ce7" }]);
             else if (t === "delete_event" && a.title) setEvents(p => p.filter(e => !String(e.title).toLowerCase().includes(String(a.title).toLowerCase())));
             else if (t === "add_expense") setExpenses(p => [...p, { id: gid(), description: a.description || "Expense", amount: Number(a.amount) || 0, category: a.category || "other" }]);
             else if (t === "add_note") setPostits(p => {
