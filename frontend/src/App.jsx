@@ -648,7 +648,7 @@ function CalendarPanel({ events, onDeleteEvent, onAddEvent, accent, light, onClo
         </Panel>
     );
 }
-
+//added insights
 function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense, onAddExpense, ambient }) {
     const [showForm, setShowForm] = useState(false);
     const [showInsights, setShowInsights] = useState(false);
