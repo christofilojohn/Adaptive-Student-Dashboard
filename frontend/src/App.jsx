@@ -21,6 +21,13 @@ const TIMETABLE_HOURS = Array.from({ length: 13 }, (_, i) => `${(i + 8).toString
 const WEEK_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday"];
 const WEEK_DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
+const toLocalDateStr = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+};
+
 // ═══════════════════════════════════════════════════
 // SMART EMOJI GUESSER
 // ═══════════════════════════════════════════════════
@@ -69,7 +76,7 @@ function guessEmoji(text) {
 // DATE AWARENESS
 // ═══════════════════════════════════════════════════
 function buildDateContext() {
-    const now = new Date(), iso = (d) => d.toISOString().split("T")[0];
+    const now = new Date(), iso = (d) => toLocalDateStr(d);
     const dn = (d) => ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][d.getDay()];
     const ad = (d, n) => { const r = new Date(d); r.setDate(r.getDate() + n); return r; };
     const dow = now.getDay();
@@ -217,66 +224,102 @@ async function callAmbientLLM(contextMsg) {
 // Shared context so every draggable knows how tall the locked header area is
 const HeaderLockCtx = createContext(0);
 
-// Ref-based registry so all draggables can snap/collide without extra re-renders
 const WidgetRegistryCtx = createContext(null);
 
 const SNAP_GRID = 20;
 const SNAP_EDGE_THRESHOLD = 18;
 
 function snapPos(rawX, rawY, thisId, registry, dragRef, minY) {
-    let x = rawX, y = Math.max(minY, rawY);
+    let x = rawX;
+    let y = Math.max(minY, rawY);
     const el = dragRef?.current;
-    if (!el || !registry) return { x: Math.round(x / SNAP_GRID) * SNAP_GRID, y: Math.max(minY, Math.round(y / SNAP_GRID) * SNAP_GRID) };
-    const w = el.offsetWidth, h = el.offsetHeight;
-    // Grid snap
+
     x = Math.round(x / SNAP_GRID) * SNAP_GRID;
     y = Math.max(minY, Math.round(y / SNAP_GRID) * SNAP_GRID);
-    // Edge-to-edge snap — find closest edge alignment within threshold
-    let bestXSnap = null, bestYSnap = null, bestXDist = SNAP_EDGE_THRESHOLD, bestYDist = SNAP_EDGE_THRESHOLD;
+
+    if (!el || !registry?.current) return { x, y };
+
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+
+    let bestXSnap = null;
+    let bestYSnap = null;
+    let bestXDist = SNAP_EDGE_THRESHOLD;
+    let bestYDist = SNAP_EDGE_THRESHOLD;
+
     registry.current.forEach((entry, id) => {
         if (id === thisId || !entry.el) return;
-        const ox = entry.x, oy = entry.y, ow = entry.el.offsetWidth, oh = entry.el.offsetHeight;
-        const d1x = Math.abs(x - (ox + ow)), d2x = Math.abs((x + w) - ox);
+        const ox = entry.x;
+        const oy = entry.y;
+        const ow = entry.el.offsetWidth;
+        const oh = entry.el.offsetHeight;
+        const d1x = Math.abs(x - (ox + ow));
+        const d2x = Math.abs((x + w) - ox);
         if (d1x < bestXDist) { bestXDist = d1x; bestXSnap = ox + ow; }
         if (d2x < bestXDist) { bestXDist = d2x; bestXSnap = ox - w; }
-        const d1y = Math.abs(y - (oy + oh)), d2y = Math.abs((y + h) - oy);
+        const d1y = Math.abs(y - (oy + oh));
+        const d2y = Math.abs((y + h) - oy);
         if (d1y < bestYDist) { bestYDist = d1y; bestYSnap = oy + oh; }
         if (d2y < bestYDist) { bestYDist = d2y; bestYSnap = oy - h; }
     });
+
     if (bestXSnap !== null) x = bestXSnap;
     if (bestYSnap !== null) y = bestYSnap;
-    // Collision push-out — resolve any remaining overlaps by pushing to nearest edge
-    registry.current.forEach((entry, id) => {
-        if (id === thisId || !entry.el) return;
-        const ox = entry.x, oy = entry.y, ow = entry.el.offsetWidth, oh = entry.el.offsetHeight;
-        if (x < ox + ow && x + w > ox && y < oy + oh && y + h > oy) {
-            const pushR = (ox + ow) - x, pushL = (x + w) - ox;
-            const pushD = (oy + oh) - y, pushU = (y + h) - oy;
-            const min = Math.min(pushR, pushL, pushD, pushU);
-            if (min === pushR) x = ox + ow;
-            else if (min === pushL) x = ox - w;
-            else if (min === pushD) y = oy + oh;
-            else y = oy - h;
-        }
-    });
+
+    let resolved = false;
+    let iterations = 0;
+    while (!resolved && iterations++ < 5) {
+        resolved = true;
+        registry.current.forEach((entry, id) => {
+            if (id === thisId || !entry.el) return;
+            const ox = entry.x;
+            const oy = entry.y;
+            const ow = entry.el.offsetWidth;
+            const oh = entry.el.offsetHeight;
+            if (x < ox + ow && x + w > ox && y < oy + oh && y + h > oy) {
+                resolved = false;
+                const pushR = (ox + ow) - x;
+                const pushL = (x + w) - ox;
+                const pushD = (oy + oh) - y;
+                const pushU = (y + h) - oy;
+                const minPush = Math.min(pushR, pushL, pushD, pushU);
+                if (minPush === pushR) x = ox + ow;
+                else if (minPush === pushL) x = ox - w;
+                else if (minPush === pushD) y = oy + oh;
+                else y = oy - h;
+            }
+        });
+    }
+
     return { x, y: Math.max(minY, y) };
 }
 
 function useDraggable(ix, iy) {
     const minY = useContext(HeaderLockCtx);
+    const registry = useContext(WidgetRegistryCtx);
     const minYRef = useRef(minY);
+    const dragRef = useRef(null);
+    const idRef = useRef(`w_${Math.random().toString(36).slice(2)}`);
     useEffect(() => { minYRef.current = minY; }, [minY]);
     const [pos, setPos] = useState({ x: ix, y: Math.max(minY, iy) });
     const dr = useRef(false), off = useRef({ x: 0, y: 0 });
-    const dragRef = useRef(null);
-    const idRef = useRef(`w_${Math.random().toString(36).slice(2)}`);
-    const registry = useContext(WidgetRegistryCtx);
-    // Keep registry up to date; cleanup on unmount
+
     useEffect(() => {
         if (!registry) return;
         registry.current.set(idRef.current, { x: pos.x, y: pos.y, el: dragRef.current });
         return () => { registry.current.delete(idRef.current); };
+    }, [registry]);
+
+    useEffect(() => {
+        if (!registry) return;
+        const entry = registry.current.get(idRef.current);
+        if (entry) {
+            entry.x = pos.x;
+            entry.y = pos.y;
+            entry.el = dragRef.current;
+        }
     }, [pos, registry]);
+
     const onMouseDown = useCallback((e) => {
         if (e.target.closest("button, input, textarea, select, a, [data-nodrag]")) return;
         e.preventDefault(); dr.current = true; off.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
@@ -284,7 +327,6 @@ function useDraggable(ix, iy) {
             if (!dr.current) return;
             const rawX = ev.clientX - off.current.x;
             const rawY = ev.clientY - off.current.y;
-            // Hold Alt to bypass snap and freely overlap other widgets
             if (ev.altKey) {
                 setPos({ x: rawX, y: Math.max(minYRef.current, rawY) });
             } else {
@@ -634,17 +676,26 @@ function TasksPanel({ tasks, onToggle, onEditTask, onRequestSplit, onAddTask, ac
     );
 }
 
-function CalendarPanel({ events, onDeleteEvent, onAddEvent, accent, light, onClose, ambient }) {
+function CalendarPanel({ events, onDeleteEvent, onAddEvent, onEditEvent, accent, light, onClose, ambient }) {
     const [view, setView] = useState("week");
     const [showForm, setShowForm] = useState(false);
-    const [formTitle, setFormTitle] = useState(""), [formDate, setFormDate] = useState(""), [formTime, setFormTime] = useState("09:00");
+    const [selectedEvent, setSelectedEvent] = useState(null);
+    const [selectedDate, setSelectedDate] = useState(null);
+    const [currentMonth, setCurrentMonth] = useState(new Date());
+    const [formTitle, setFormTitle] = useState("");
+    const [formDate, setFormDate] = useState("");
+    const [formTime, setFormTime] = useState("09:00");
+    const [formDuration, setFormDuration] = useState(60);
+    const [formColor, setFormColor] = useState("");
     const today = new Date();
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     const tx = light ? "#2d3436" : "#fff";
     const dN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const dNF = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const mN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     const week = Array.from({ length: 7 }, (_, i) => { const d = new Date(today); d.setDate(d.getDate() + i); return d; });
-    const evFor = d => events.filter(e => e.date === d.toISOString().split("T")[0]);
-    const evColors = ["#6c5ce7", "#00cec9", "#e17055", "#00b894", "#fdcb6e", "#e84393"];
+    const evFor = d => events.filter(e => e.date === toLocalDateStr(d)).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+    const evColors = ["#6c5ce7", "#00cec9", "#e17055", "#00b894", "#fdcb6e", "#e84393", "#74b9ff", "#a29bfe"];
 
     const exportICS = () => {
         let ics = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Dashboard//EN\n";
@@ -654,66 +705,536 @@ function CalendarPanel({ events, onDeleteEvent, onAddEvent, accent, light, onClo
         });
         ics += "END:VCALENDAR"; const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([ics], { type: "text/calendar" })); a.download = "calendar.ics"; a.click();
     };
-    const submitEvent = () => {
-        if (!formTitle.trim()) return;
-        onAddEvent(formTitle.trim(), formDate || today.toISOString().split("T")[0], formTime, evColors[Math.floor(Math.random() * evColors.length)]);
-        setFormTitle(""); setFormDate(""); setFormTime("09:00"); setShowForm(false);
+
+    const openAddForm = (date = null, time = "09:00") => {
+        setSelectedEvent(null);
+        setFormTitle("");
+        setFormDate(date || toLocalDateStr(today));
+        setFormTime(time);
+        setFormDuration(60);
+        setFormColor(evColors[Math.floor(Math.random() * evColors.length)]);
+        setShowForm(true);
     };
 
+    const openEditForm = (ev) => {
+        setSelectedEvent(ev);
+        setFormTitle(ev.title);
+        setFormDate(ev.date);
+        setFormTime(ev.time || "09:00");
+        setFormDuration(ev.duration || 60);
+        setFormColor(ev.color || accent);
+        setShowForm(true);
+    };
+
+    const submitEvent = () => {
+        if (!formTitle.trim()) return;
+        if (selectedEvent) {
+            onEditEvent(selectedEvent.id, formTitle.trim(), formDate, formTime, formDuration, formColor);
+        } else {
+            onAddEvent(formTitle.trim(), formDate, formTime, formDuration, formColor);
+        }
+        setShowForm(false);
+        setSelectedEvent(null);
+        setSelectedDate(null);
+    };
+
+    const getMonthDays = () => {
+        const year = currentMonth.getFullYear();
+        const month = currentMonth.getMonth();
+        const firstDay = new Date(year, month, 1);
+        const lastDay = new Date(year, month + 1, 0);
+        const daysInMonth = lastDay.getDate();
+        const startDayOfWeek = firstDay.getDay();
+        const days = [];
+        for (let i = 0; i < startDayOfWeek; i++) days.push(null);
+        for (let i = 1; i <= daysInMonth; i++) days.push(new Date(year, month, i));
+        return days;
+    };
+
+    const formatDuration = (mins) => {
+        if (mins < 60) return `${mins}m`;
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    };
+
+    const groupEventsByDate = () => {
+        const grouped = {};
+        [...events].sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`)).forEach(ev => {
+            if (!grouped[ev.date]) grouped[ev.date] = [];
+            grouped[ev.date].push(ev);
+        });
+        return grouped;
+    };
+
+    const isToday = (d) => d.toDateString() === today.toDateString();
+    const isPast = (d) => d < new Date(new Date(today).setHours(0, 0, 0, 0));
+
     return (
-        <Panel x={24} y={485} width={330} title="Calendar" icon="📅" light={light} onClose={onClose} ambient={ambient} accent={accent}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <div style={{ display: "flex", gap: 3 }}>
-                    {["week", "list"].map(v => <button key={v} onClick={() => setView(v)} style={{ padding: "2px 7px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", textTransform: "uppercase", letterSpacing: 1, background: view === v ? `${accent}22` : "transparent", border: `1px solid ${view === v ? `${accent}44` : "transparent"}`, color: view === v ? accent : txm }}>{v}</button>)}
+        <Panel x={24} y={485} width={360} title="Calendar" icon="📅" light={light} onClose={onClose} ambient={ambient} accent={accent}>
+            {/* Header with view switcher and actions */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <div style={{ display: "flex", gap: 4, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.05)", borderRadius: 6, padding: 2 }}>
+                    {["week", "month", "list"].map(v => (
+                        <button key={v} onClick={() => setView(v)} style={{
+                            padding: "4px 10px",
+                            borderRadius: 5,
+                            fontSize: 10,
+                            cursor: "pointer",
+                            fontFamily: "'JetBrains Mono'",
+                            textTransform: "uppercase",
+                            letterSpacing: 0.5,
+                            background: view === v ? (light ? "#fff" : "rgba(255,255,255,0.15)") : "transparent",
+                            border: "none",
+                            color: view === v ? accent : txm,
+                            boxShadow: view === v ? (light ? "0 1px 3px rgba(0,0,0,0.1)" : "0 1px 3px rgba(0,0,0,0.3)") : "none",
+                            transition: "all 0.2s"
+                        }}>{v}</button>
+                    ))}
                 </div>
-                <div style={{ display: "flex", gap: 3 }}>
-                    <button onClick={() => setShowForm(f => !f)} style={{ padding: "2px 7px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: `${accent}15`, border: `1px solid ${accent}33`, color: accent }}>{showForm ? "Cancel" : "+ Event"}</button>
-                    <button onClick={exportICS} style={{ padding: "2px 7px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: "transparent", border: `1px solid ${light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.08)"}`, color: txm }}>.ics</button>
+                <div style={{ display: "flex", gap: 4 }}>
+                    <button onClick={() => openAddForm()} style={{
+                        padding: "4px 10px",
+                        borderRadius: 6,
+                        fontSize: 10,
+                        cursor: "pointer",
+                        fontFamily: "'JetBrains Mono'",
+                        background: `${accent}20`,
+                        border: `1px solid ${accent}40`,
+                        color: accent,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                        transition: "all 0.2s"
+                    }}><span>+</span> Event</button>
+                    <button onClick={exportICS} style={{
+                        padding: "4px 10px",
+                        borderRadius: 6,
+                        fontSize: 10,
+                        cursor: "pointer",
+                        fontFamily: "'JetBrains Mono'",
+                        background: "transparent",
+                        border: `1px solid ${light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`,
+                        color: txm,
+                        transition: "all 0.2s"
+                    }}>Export</button>
                 </div>
             </div>
+
+            {/* Add/Edit Form */}
             {showForm && (
-                <div className="anim-panel" style={{ marginBottom: 8, padding: 8, borderRadius: 8, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)", border: `1px solid ${light ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.05)"}` }} data-nodrag>
-                    <input value={formTitle} onChange={e => setFormTitle(e.target.value)} placeholder="Event title" onKeyDown={e => e.key === "Enter" && submitEvent()}
-                        style={{ width: "100%", background: "transparent", border: "none", outline: "none", fontSize: 11, color: tx, fontFamily: "'DM Sans'", marginBottom: 5 }} />
-                    <div style={{ display: "flex", gap: 4 }}>
-                        <input type="date" value={formDate} onChange={e => setFormDate(e.target.value)} style={{ flex: 1, background: "transparent", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, fontFamily: "'JetBrains Mono'", outline: "none", colorScheme: light ? "light" : "dark" }} />
-                        <input type="time" value={formTime} onChange={e => setFormTime(e.target.value)} style={{ width: 70, background: "transparent", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, fontFamily: "'JetBrains Mono'", outline: "none", colorScheme: light ? "light" : "dark" }} />
-                        <button onClick={submitEvent} style={{ background: `${accent}22`, border: `1px solid ${accent}44`, borderRadius: 4, padding: "2px 8px", fontSize: 10, cursor: "pointer", color: accent }}>Add</button>
+                <div className="anim-panel" style={{
+                    marginBottom: 12,
+                    padding: 12,
+                    borderRadius: 10,
+                    background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.05)",
+                    border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`
+                }} data-nodrag>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: tx }}>{selectedEvent ? "Edit Event" : "New Event"}</span>
+                        <button onClick={() => setShowForm(false)} style={{ background: "none", border: "none", color: txm, cursor: "pointer", fontSize: 14 }}>×</button>
+                    </div>
+                    <input
+                        value={formTitle}
+                        onChange={e => setFormTitle(e.target.value)}
+                        placeholder="Event title"
+                        onKeyDown={e => e.key === "Enter" && submitEvent()}
+                        style={{
+                            width: "100%",
+                            background: light ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.2)",
+                            border: `1px solid ${light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`,
+                            borderRadius: 6,
+                            outline: "none",
+                            fontSize: 12,
+                            color: tx,
+                            fontFamily: "'DM Sans'",
+                            padding: "6px 10px",
+                            marginBottom: 8
+                        }}
+                    />
+                    <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                        <div style={{ flex: 1 }}>
+                            <label style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", textTransform: "uppercase", letterSpacing: 0.5 }}>Date</label>
+                            <input type="date" value={formDate} onChange={e => setFormDate(e.target.value)} style={{
+                                width: "100%",
+                                background: light ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.2)",
+                                border: `1px solid ${light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`,
+                                borderRadius: 6,
+                                padding: "5px 8px",
+                                fontSize: 10,
+                                color: tx,
+                                fontFamily: "'JetBrains Mono'",
+                                outline: "none",
+                                marginTop: 3
+                            }} />
+                        </div>
+                        <div style={{ width: 80 }}>
+                            <label style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", textTransform: "uppercase", letterSpacing: 0.5 }}>Time</label>
+                            <input type="time" value={formTime} onChange={e => setFormTime(e.target.value)} style={{
+                                width: "100%",
+                                background: light ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.2)",
+                                border: `1px solid ${light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`,
+                                borderRadius: 6,
+                                padding: "5px 8px",
+                                fontSize: 10,
+                                color: tx,
+                                fontFamily: "'JetBrains Mono'",
+                                outline: "none",
+                                marginTop: 3
+                            }} />
+                        </div>
+                        <div style={{ width: 70 }}>
+                            <label style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", textTransform: "uppercase", letterSpacing: 0.5 }}>Duration</label>
+                            <select value={formDuration} onChange={e => setFormDuration(parseInt(e.target.value))} style={{
+                                width: "100%",
+                                background: light ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.2)",
+                                border: `1px solid ${light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`,
+                                borderRadius: 6,
+                                padding: "5px 8px",
+                                fontSize: 10,
+                                color: tx,
+                                fontFamily: "'JetBrains Mono'",
+                                outline: "none",
+                                marginTop: 3
+                            }}>
+                                <option value={15}>15m</option>
+                                <option value={30}>30m</option>
+                                <option value={60}>1h</option>
+                                <option value={90}>1.5h</option>
+                                <option value={120}>2h</option>
+                                <option value={180}>3h</option>
+                                <option value={240}>4h</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div style={{ marginBottom: 10 }}>
+                        <label style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", textTransform: "uppercase", letterSpacing: 0.5, display: "block", marginBottom: 4 }}>Color</label>
+                        <div style={{ display: "flex", gap: 6 }}>
+                            {evColors.map(c => (
+                                <button
+                                    key={c}
+                                    onClick={() => setFormColor(c)}
+                                    style={{
+                                        width: 22,
+                                        height: 22,
+                                        borderRadius: "50%",
+                                        background: c,
+                                        border: formColor === c ? `2px solid ${light ? "#2d3436" : "#fff"}` : "2px solid transparent",
+                                        cursor: "pointer",
+                                        transform: formColor === c ? "scale(1.1)" : "scale(1)",
+                                        transition: "all 0.2s"
+                                    }}
+                                />
+                            ))}
+                        </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                        {selectedEvent && (
+                            <button onClick={() => { onDeleteEvent(selectedEvent.id); setShowForm(false); }} style={{
+                                padding: "6px 12px",
+                                borderRadius: 6,
+                                fontSize: 10,
+                                cursor: "pointer",
+                                fontFamily: "'JetBrains Mono'",
+                                background: "rgba(231, 76, 60, 0.15)",
+                                border: "1px solid rgba(231, 76, 60, 0.3)",
+                                color: "#e74c3c"
+                            }}>Delete</button>
+                        )}
+                        <button onClick={submitEvent} style={{
+                            flex: 1,
+                            padding: "6px 12px",
+                            borderRadius: 6,
+                            fontSize: 10,
+                            cursor: "pointer",
+                            fontFamily: "'JetBrains Mono'",
+                            background: `${accent}25`,
+                            border: `1px solid ${accent}50`,
+                            color: accent,
+                            fontWeight: 600
+                        }}>{selectedEvent ? "Save Changes" : "Add Event"}</button>
                     </div>
                 </div>
             )}
-            {view === "week" && <div style={{ display: "flex", gap: 2 }}>
-                {week.map((d, i) => {
-                    const isT = i === 0, devs = evFor(d); return (
-                        <div key={i} style={{ flex: 1, textAlign: "center", padding: "5px 1px", borderRadius: 7, background: isT ? `${accent}15` : "transparent", border: isT ? `1px solid ${accent}33` : "1px solid transparent" }}>
-                            <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'" }}>{dN[d.getDay()]}</div>
-                            <div style={{ fontSize: 15, fontWeight: isT ? 700 : 400, color: tx, margin: "1px 0" }}>{d.getDate()}</div>
-                            {devs.map((ev, j) => <div key={j} style={{ width: 5, height: 5, borderRadius: "50%", background: ev.color || accent, margin: "1px auto 0" }} title={`${ev.title} ${ev.time}`} />)}
-                        </div>);
-                })}
-            </div>}
-            {view === "list" && <div style={{ maxHeight: 120, overflowY: "auto" }}>
-                {events.length === 0 && <div style={{ fontSize: 11, color: txm, fontStyle: "italic" }}>No events</div>}
-                {[...events].sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`)).map(ev => {
-                    const em = guessEmoji(ev.title);
-                    return <div key={ev.id} className="anim-item" style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0", borderBottom: `1px solid ${light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.03)"}` }}>
-                        <div style={{ width: 3, height: 22, borderRadius: 2, background: ev.color || accent, flexShrink: 0 }} />
-                        {em && <span style={{ fontSize: 11 }}>{em}</span>}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 11, fontWeight: 500, color: tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ev.title}</div>
-                            <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'" }}>{ev.date} · {ev.time}</div>
+
+            {/* Week View */}
+            {view === "week" && (
+                <div style={{ display: "flex", gap: 4 }}>
+                    {week.map((d, i) => {
+                        const isTodayDate = isToday(d);
+                        const dayEvents = evFor(d);
+                        const isPastDate = isPast(d);
+                        return (
+                            <div
+                                key={i}
+                                onClick={() => openAddForm(toLocalDateStr(d))}
+                                style={{
+                                    flex: 1,
+                                    textAlign: "center",
+                                    padding: "6px 3px",
+                                    borderRadius: 8,
+                                    background: isTodayDate ? `${accent}15` : (light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)"),
+                                    border: isTodayDate ? `1px solid ${accent}40` : `1px solid ${light ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.05)"}`,
+                                    cursor: "pointer",
+                                    transition: "all 0.2s",
+                                    opacity: isPastDate ? 0.6 : 1
+                                }}
+                            >
+                                <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", textTransform: "uppercase" }}>{dN[d.getDay()]}</div>
+                                <div style={{
+                                    fontSize: 16,
+                                    fontWeight: isTodayDate ? 700 : 500,
+                                    color: isTodayDate ? accent : tx,
+                                    margin: "2px 0 6px"
+                                }}>{d.getDate()}</div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 2, minHeight: 20 }}>
+                                    {dayEvents.slice(0, 3).map((ev, j) => (
+                                        <div
+                                            key={j}
+                                            onClick={(e) => { e.stopPropagation(); openEditForm(ev); }}
+                                            style={{
+                                                padding: "2px 4px",
+                                                borderRadius: 3,
+                                                background: `${ev.color || accent}25`,
+                                                border: `1px solid ${ev.color || accent}40`,
+                                                fontSize: 7,
+                                                color: tx,
+                                                overflow: "hidden",
+                                                textOverflow: "ellipsis",
+                                                whiteSpace: "nowrap",
+                                                cursor: "pointer",
+                                                transition: "all 0.2s"
+                                            }}
+                                            title={`${ev.title} (${ev.time}${ev.duration ? `, ${formatDuration(ev.duration)}` : ""})`}
+                                        >
+                                            {ev.time} {ev.title}
+                                        </div>
+                                    ))}
+                                    {dayEvents.length > 3 && (
+                                        <div style={{ fontSize: 7, color: txm, fontFamily: "'JetBrains Mono'" }}>+{dayEvents.length - 3} more</div>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+
+            {/* Month View */}
+            {view === "month" && (
+                <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                        <button onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))} style={{
+                            background: "none",
+                            border: "none",
+                            color: txm,
+                            cursor: "pointer",
+                            fontSize: 14,
+                            padding: "2px 8px",
+                            borderRadius: 4,
+                            transition: "all 0.2s"
+                        }}>‹</button>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: tx, fontFamily: "'DM Sans'" }}>
+                            {mN[currentMonth.getMonth()]} {currentMonth.getFullYear()}
+                        </span>
+                        <button onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))} style={{
+                            background: "none",
+                            border: "none",
+                            color: txm,
+                            cursor: "pointer",
+                            fontSize: 14,
+                            padding: "2px 8px",
+                            borderRadius: 4,
+                            transition: "all 0.2s"
+                        }}>›</button>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, marginBottom: 4 }}>
+                        {dN.map(d => (
+                            <div key={d} style={{ textAlign: "center", fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", padding: "4px 0" }}>{d}</div>
+                        ))}
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+                        {getMonthDays().map((d, i) => {
+                            if (!d) return <div key={i} style={{ aspectRatio: 1 }} />;
+                            const isTodayDate = isToday(d);
+                            const dayEvents = evFor(d);
+                            const isPastDate = isPast(d);
+                            return (
+                                <div
+                                    key={i}
+                                    onClick={() => openAddForm(toLocalDateStr(d))}
+                                    style={{
+                                        aspectRatio: 1,
+                                        padding: 3,
+                                        borderRadius: 6,
+                                        background: isTodayDate ? `${accent}20` : (light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)"),
+                                        border: isTodayDate ? `1px solid ${accent}50` : "1px solid transparent",
+                                        cursor: "pointer",
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        alignItems: "center",
+                                        transition: "all 0.2s",
+                                        opacity: isPastDate ? 0.5 : 1
+                                    }}
+                                >
+                                    <span style={{
+                                        fontSize: 10,
+                                        fontWeight: isTodayDate ? 700 : 400,
+                                        color: isTodayDate ? accent : tx,
+                                        marginBottom: 2
+                                    }}>{d.getDate()}</span>
+                                    <div style={{ display: "flex", gap: 1, flexWrap: "wrap", justifyContent: "center" }}>
+                                        {dayEvents.slice(0, 3).map((ev, j) => (
+                                            <div
+                                                key={j}
+                                                onClick={(e) => { e.stopPropagation(); openEditForm(ev); }}
+                                                style={{
+                                                    width: 5,
+                                                    height: 5,
+                                                    borderRadius: "50%",
+                                                    background: ev.color || accent,
+                                                    cursor: "pointer"
+                                                }}
+                                                title={ev.title}
+                                            />
+                                        ))}
+                                        {dayEvents.length > 3 && (
+                                            <span style={{ fontSize: 6, color: txm }}>+</span>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+
+            {/* List View */}
+            {view === "list" && (
+                <div style={{ maxHeight: 200, overflowY: "auto" }}>
+                    {events.length === 0 && (
+                        <div style={{ textAlign: "center", padding: "20px 0", color: txm, fontStyle: "italic", fontSize: 12 }}>
+                            No events scheduled
                         </div>
-                        <button onClick={() => onDeleteEvent(ev.id)} style={{ background: "none", border: "none", color: txm, cursor: "pointer", fontSize: 10, lineHeight: 1, flexShrink: 0 }}>×</button>
-                    </div>;
-                })}
-            </div>}
+                    )}
+                    {Object.entries(groupEventsByDate()).map(([date, dayEvents]) => {
+                        const [y, mo, day] = date.split("-").map(Number);
+                        const d = new Date(y, mo - 1, day);
+                        const isTodayDate = isToday(d);
+                        const isPastDate = d < new Date(new Date().setHours(0, 0, 0, 0));
+                        return (
+                            <div key={date} style={{ marginBottom: 10 }}>
+                                <div style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 6,
+                                    padding: "4px 0",
+                                    borderBottom: `1px solid ${light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.06)"}`,
+                                    marginBottom: 6
+                                }}>
+                                    <span style={{
+                                        fontSize: 11,
+                                        fontWeight: 600,
+                                        color: isTodayDate ? accent : tx,
+                                        fontFamily: "'DM Sans'"
+                                    }}>
+                                        {isTodayDate ? "Today" : dNF[d.getDay()]}
+                                    </span>
+                                    <span style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>
+                                        {date}
+                                    </span>
+                                    {isPastDate && !isTodayDate && (
+                                        <span style={{ fontSize: 7, color: txm, textTransform: "uppercase", letterSpacing: 0.5 }}>Past</span>
+                                    )}
+                                </div>
+                                {dayEvents.map(ev => {
+                                    const em = guessEmoji(ev.title);
+                                    return (
+                                        <div
+                                            key={ev.id}
+                                            onClick={() => openEditForm(ev)}
+                                            className="anim-item"
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 8,
+                                                padding: "6px 8px",
+                                                marginBottom: 4,
+                                                borderRadius: 6,
+                                                background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)",
+                                                border: `1px solid ${light ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)"}`,
+                                                cursor: "pointer",
+                                                transition: "all 0.2s",
+                                                opacity: isPastDate && !isTodayDate ? 0.6 : 1
+                                            }}
+                                        >
+                                            <div style={{
+                                                width: 3,
+                                                height: 28,
+                                                borderRadius: 2,
+                                                background: ev.color || accent,
+                                                flexShrink: 0
+                                            }} />
+                                            <div style={{
+                                                width: 40,
+                                                textAlign: "center",
+                                                fontSize: 10,
+                                                color: txm,
+                                                fontFamily: "'JetBrains Mono'"
+                                            }}>
+                                                {ev.time}
+                                            </div>
+                                            {em && <span style={{ fontSize: 12 }}>{em}</span>}
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{
+                                                    fontSize: 11,
+                                                    fontWeight: 500,
+                                                    color: tx,
+                                                    overflow: "hidden",
+                                                    textOverflow: "ellipsis",
+                                                    whiteSpace: "nowrap"
+                                                }}>{ev.title}</div>
+                                                {ev.duration && (
+                                                    <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'" }}>
+                                                        {formatDuration(ev.duration)}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); onDeleteEvent(ev.id); }}
+                                                style={{
+                                                    background: "none",
+                                                    border: "none",
+                                                    color: txm,
+                                                    cursor: "pointer",
+                                                    fontSize: 14,
+                                                    lineHeight: 1,
+                                                    flexShrink: 0,
+                                                    padding: "2px 6px",
+                                                    borderRadius: 4,
+                                                    transition: "all 0.2s"
+                                                }}
+                                            >×</button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
         </Panel>
     );
 }
-
+//added insights
 function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense, onAddExpense, ambient }) {
     const [showForm, setShowForm] = useState(false);
+    const [showInsights, setShowInsights] = useState(false);
     const [desc, setDesc] = useState(""), [amt, setAmt] = useState(""), [cat, setCat] = useState("other");
+    const [error, setError] = useState("");
+    const [expenseDate, setExpenseDate] = useState(() => toLocalDateStr(new Date()));
+    const [insightsPeriod, setInsightsPeriod] = useState("weekly"); // "weekly" or "monthly"
+    const [chartType, setChartType] = useState("histogram"); // "histogram" or "line"
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     const tx = light ? "#2d3436" : "#fff";
     const total = expenses.reduce((s, e) => s + e.amount, 0);
@@ -722,8 +1243,107 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     const catI = { food: "🍽️", transport: "🚗", entertainment: "🎬", shopping: "🛍️", bills: "📄", health: "💊", other: "📦" };
     const catC = { food: "#e17055", transport: "#0984e3", entertainment: "#6c5ce7", shopping: "#fdcb6e", bills: "#636e72", health: "#00b894", other: "#b2bec3" };
     const catT = {}; expenses.forEach(e => { catT[e.category] = (catT[e.category] || 0) + e.amount; });
-    const submit = () => { if (!desc.trim() || !amt || parseFloat(amt) <= 0) return; onAddExpense(desc.trim(), parseFloat(amt), cat); setDesc(""); setAmt(""); setShowForm(false); };
+    const submit = () => { 
+        setError("");
+        const descTrimmed = desc.trim();
+        const amtNum = parseFloat(amt);
+        
+        if (!descTrimmed) {
+            setError("Add a description");
+            return;
+        }
+        if (!amt || isNaN(amtNum)) {
+            setError("Enter an amount");
+            return;
+        }
+        if (amtNum <= 0) {
+            setError("Amount must be > 0");
+            return;
+        }
+        
+        onAddExpense(descTrimmed, amtNum, cat, expenseDate);
+        setDesc("");
+        setAmt("");
+        setExpenseDate(toLocalDateStr(new Date()));
+        setError("");
+        setShowForm(false);
+    };
 
+    // Budget Insights Calculations
+    const now = new Date();
+    const today = new Date();
+    // Helper to parse date string as local date (not UTC)
+    const parseLocalDate = (dateStr) => {
+        if (!dateStr) return new Date();
+        // Handle both YYYY-MM-DD and ISO format
+        const datePart = typeof dateStr === 'string' ? dateStr.split('T')[0] : dateStr;
+        const [year, month, day] = datePart.split('-').map(Number);
+        return new Date(year, month - 1, day);
+    };
+    // Weekly calculations
+    const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0,0,0,0);
+    const startOfLastWeek = new Date(startOfWeek); startOfLastWeek.setDate(startOfWeek.getDate() - 7);
+    const endOfToday = new Date(today); endOfToday.setHours(23, 59, 59, 999);
+    
+    const thisWeekExpenses = expenses.filter(e => {
+        const d = parseLocalDate(e.date);
+        return d >= startOfWeek && d <= endOfToday;
+    });
+    const lastWeekExpenses = expenses.filter(e => { const d = parseLocalDate(e.date); return d >= startOfLastWeek && d < startOfWeek; });
+    const thisWeekTotal = thisWeekExpenses.reduce((s, e) => s + e.amount, 0);
+    const lastWeekTotal = lastWeekExpenses.reduce((s, e) => s + e.amount, 0);
+    const weeklyChange = lastWeekTotal > 0 ? ((thisWeekTotal - lastWeekTotal) / lastWeekTotal * 100) : 0;
+    
+    // Monthly calculations
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastMonth = new Date(startOfMonth.getFullYear(), startOfMonth.getMonth() - 1, 1);
+    
+    const thisMonthExpenses = expenses.filter(e => {
+        const d = parseLocalDate(e.date);
+        return d >= startOfMonth && d <= endOfToday;
+    });
+    const lastMonthExpenses = expenses.filter(e => { const d = parseLocalDate(e.date); return d >= startOfLastMonth && d < startOfMonth; });
+    const thisMonthTotal = thisMonthExpenses.reduce((s, e) => s + e.amount, 0);
+    const lastMonthTotal = lastMonthExpenses.reduce((s, e) => s + e.amount, 0);
+    const monthlyChange = lastMonthTotal > 0 ? ((thisMonthTotal - lastMonthTotal) / lastMonthTotal * 100) : 0;
+    
+    // Highest spending category (THIS WEEK/MONTH)
+    const periodExpenses = insightsPeriod === "weekly" ? thisWeekExpenses : thisMonthExpenses;
+    const periodTotal = insightsPeriod === "weekly" ? thisWeekTotal : thisMonthTotal;
+    const periodLabel = insightsPeriod === "weekly" ? "week" : "month";
+    const periodCatT = {};
+    periodExpenses.forEach(e => { periodCatT[e.category] = (periodCatT[e.category] || 0) + e.amount; });
+    const sortedCats = Object.entries(periodCatT).sort((a, b) => b[1] - a[1]);
+    const topCategory = sortedCats[0];
+    
+    // Daily/Weekly spending data based on period
+    let chartData = [];
+    if (insightsPeriod === "weekly") {
+        // Last 7 days
+        for (let i = 6; i >= 0; i--) {
+            const d = new Date(now); d.setDate(now.getDate() - i); d.setHours(0,0,0,0);
+            const dayTotal = expenses.filter(e => {
+                const ed = parseLocalDate(e.date);
+                return ed.toDateString() === d.toDateString();
+            }).reduce((s, e) => s + e.amount, 0);
+            chartData.push({ label: d.toLocaleDateString('en', { weekday: 'narrow' }), amount: dayTotal, date: d });
+        }
+    } else {
+        // Last 30 days of current month + last month
+        const startDate = new Date(now);
+        startDate.setDate(1);
+        for (let i = 0; i < 31; i++) {
+            const d = new Date(startDate);
+            d.setDate(startDate.getDate() + i);
+            if (d.getMonth() !== startOfMonth.getMonth()) break;
+            const dayTotal = expenses.filter(e => {
+                const ed = parseLocalDate(e.date);
+                return ed.toDateString() === d.toDateString();
+            }).reduce((s, e) => s + e.amount, 0);
+            chartData.push({ label: d.getDate().toString(), amount: dayTotal, date: d });
+        }
+    }
+    const maxChartAmount = Math.max(...chartData.map(d => d.amount), 1);
     return (
         <Panel x={370} y={320} width={250} title="Budget" icon="💰" light={light} onClose={onClose} ambient={ambient} accent={accent}>
             <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 8 }}>
@@ -754,12 +1374,16 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
                 {expenses.length === 0 && <div style={{ fontSize: 10, color: txm, fontStyle: "italic" }}>No expenses</div>}
                 {[...expenses].reverse().slice(0, 6).map(ex => {
                     const em = guessEmoji(ex.description);
+                    const exDate = parseLocalDate(ex.date);
+                    const dateStr = exDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                    const isToday = exDate.toDateString() === today.toDateString();
                     return (
                         <div key={ex.id} style={{ display: "flex", alignItems: "center", gap: 5, padding: "2px 0", borderBottom: `1px solid ${light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.03)"}` }}>
                             <span style={{ fontSize: 9 }}>{catI[ex.category]}</span>
                             <span style={{ flex: 1, fontSize: 10, color: tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                 {ex.description} {em && <span style={{ fontSize: 9 }}>{em}</span>}
                             </span>
+                            <span style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'" }}>{isToday ? "Today" : dateStr}</span>
                             <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: txm, flexShrink: 0 }}>€{ex.amount.toFixed(2)}</span>
                             <button onClick={() => onDeleteExpense(ex.id)} style={{ background: "none", border: "none", color: txm, cursor: "pointer", fontSize: 9, lineHeight: 1, padding: 0 }}>×</button>
                         </div>)
@@ -767,27 +1391,140 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
             </div>
             <div style={{ display: "flex", gap: 3, marginTop: 6 }}>
                 <button onClick={() => setShowForm(f => !f)} style={{ flex: 1, padding: "3px 0", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: `${accent}15`, border: `1px solid ${accent}33`, color: accent }}>{showForm ? "Cancel" : "+ Expense"}</button>
+                <button onClick={() => setShowInsights(i => !i)} style={{ padding: "3px 8px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: light ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.08)", border: `1px solid ${light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`, color: tx }}>{showInsights ? "Hide" : "Insights"}</button>
             </div>
             {showForm && <div className="anim-panel" style={{ marginTop: 5, padding: 6, borderRadius: 6, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)" }} data-nodrag>
-                <input value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description" style={{ width: "100%", background: "transparent", border: "none", outline: "none", fontSize: 10, color: tx, marginBottom: 4 }} />
-                <div style={{ display: "flex", gap: 3 }}>
-                    <input value={amt} onChange={e => setAmt(e.target.value)} placeholder="€" type="number" step="0.01" style={{ width: 55, background: "transparent", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, outline: "none" }} />
+                <input value={desc} onChange={e => { setDesc(e.target.value); setError(""); }} placeholder="Description" style={{ width: "100%", background: "transparent", border: "none", outline: "none", fontSize: 10, color: tx, marginBottom: 4 }} />
+                <div style={{ display: "flex", gap: 3, marginBottom: 3 }}>
+                    <input value={amt} onChange={e => { setAmt(e.target.value); setError(""); }} placeholder="€" type="number" step="0.01" style={{ width: 45, background: "transparent", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, outline: "none" }} />
                     <select value={cat} onChange={e => setCat(e.target.value)} style={{ flex: 1, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.05)", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 4, fontSize: 9, color: tx, outline: "none", padding: "2px" }}>
                         {Object.keys(catI).map(c => <option key={c} value={c}>{catI[c]} {c}</option>)}
                     </select>
                     <button onClick={submit} style={{ background: `${accent}22`, border: `1px solid ${accent}44`, borderRadius: 4, padding: "2px 6px", fontSize: 10, cursor: "pointer", color: accent }}>+</button>
+                </div>
+                <input type="date" value={expenseDate} onChange={e => { setExpenseDate(e.target.value); setError(""); }} style={{ width: "100%", background: "transparent", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, outline: "none", marginBottom: error ? 3 : 0 }} />
+                {error && <div style={{ fontSize: 8, color: "#e74c3c", fontFamily: "'JetBrains Mono'" }}>{error}</div>}
+            </div>}
+            {showInsights && expenses.length > 0 && <div className="anim-panel" style={{ marginTop: 6, padding: 8, borderRadius: 6, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.05)", border: `1px solid ${light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.08)"}` }}>
+                {/* Period and Chart Type Toggles */}
+                <div style={{ display: "flex", gap: 3, marginBottom: 8 }}>
+                    <div style={{ display: "flex", gap: 2 }}>
+                        <button onClick={() => { setInsightsPeriod("weekly"); }} style={{ padding: "2px 6px", fontSize: 8, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: insightsPeriod === "weekly" ? accent : light ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.08)", border: `1px solid ${insightsPeriod === "weekly" ? accent : light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`, borderRadius: 3, color: insightsPeriod === "weekly" ? (light ? "#fff" : "#000") : txm, transition: "all 0.2s" }}>Weekly</button>
+                        <button onClick={() => { setInsightsPeriod("monthly"); setChartType("line"); }} style={{ padding: "2px 6px", fontSize: 8, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: insightsPeriod === "monthly" ? accent : light ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.08)", border: `1px solid ${insightsPeriod === "monthly" ? accent : light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`, borderRadius: 3, color: insightsPeriod === "monthly" ? (light ? "#fff" : "#000") : txm, transition: "all 0.2s" }}>Monthly</button>
+                    </div>
+                    <div style={{ display: "flex", gap: 2, marginLeft: "auto" }}>
+                        {insightsPeriod === "weekly" && <button onClick={() => setChartType("histogram")} style={{ padding: "2px 6px", fontSize: 8, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: chartType === "histogram" ? accent : light ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.08)", border: `1px solid ${chartType === "histogram" ? accent : light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`, borderRadius: 3, color: chartType === "histogram" ? (light ? "#fff" : "#000") : txm, transition: "all 0.2s" }}>📊</button>}
+                        <button onClick={() => setChartType("line")} style={{ padding: "2px 6px", fontSize: 8, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: chartType === "line" ? accent : light ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.08)", border: `1px solid ${chartType === "line" ? accent : light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`, borderRadius: 3, color: chartType === "line" ? (light ? "#fff" : "#000") : txm, transition: "all 0.2s" }}>📈</button>
+                    </div>
+                </div>
+
+                {/* Spending Trend */}
+                <div style={{ marginBottom: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <span style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>This {periodLabel}</span>
+                        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: (insightsPeriod === "weekly" ? weeklyChange : monthlyChange) > 0 ? "#e74c3c" : (insightsPeriod === "weekly" ? weeklyChange : monthlyChange) < 0 ? "#00b894" : txm }}>
+                            {(insightsPeriod === "weekly" ? weeklyChange : monthlyChange) > 0 ? "↑" : (insightsPeriod === "weekly" ? weeklyChange : monthlyChange) < 0 ? "↓" : "→"} {(insightsPeriod === "weekly" ? lastWeekTotal : lastMonthTotal) > 0 ? Math.abs(insightsPeriod === "weekly" ? weeklyChange : monthlyChange).toFixed(0) + "%" : "New"} {(insightsPeriod === "weekly" ? lastWeekTotal : lastMonthTotal) > 0 ? "vs last " + periodLabel : "data"}
+                        </span>
+                    </div>
+                    {/* Chart - Histogram or Line */}
+                    {chartType === "histogram" ? (
+                        <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 38, padding: "4px 0", overflowX: "auto", overflowY: "hidden", minHeight: 50 }}>
+                            {chartData.map((d, i) => (
+                                <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 28, flex: "0 0 auto" }}>
+                                    <div style={{ 
+                                        width: 22, 
+                                        height: `${Math.max((d.amount / maxChartAmount) * 20, 2)}px`, 
+                                        background: d.amount > 0 && d.amount === maxChartAmount ? accent : light ? "rgba(0,0,0,0.2)" : "rgba(255,255,255,0.3)",
+                                        borderRadius: 2,
+                                        transition: "all 0.3s"
+                                    }} />
+                                    <span style={{ fontSize: 7, color: txm, whiteSpace: "nowrap" }}>{d.label}</span>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div style={{ width: "100%", height: 45, position: "relative", marginBottom: 4, overflowX: "auto" }}>
+                            <svg width="100%" height="45" viewBox={`0 0 ${Math.max(chartData.length - 1, 1) * 25} 45`} preserveAspectRatio="none" style={{ minWidth: "100%", overflow: "visible" }}>
+                                {/* Grid lines */}
+                                <line x1="0" y1="38" x2={Math.max(chartData.length - 1, 1) * 25} y2="38" stroke={light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"} strokeWidth="0.5" />
+                                {/* Line chart polyline */}
+                                <polyline
+                                    points={chartData.map((d, i) => `${i * 25},${38 - (d.amount / maxChartAmount) * 32}`).join(" ")}
+                                    fill="none"
+                                    stroke={accent}
+                                    strokeWidth="1"
+                                />
+                                {/* Points */}
+                                {chartData.map((d, i) => (
+                                    <circle
+                                        key={i}
+                                        cx={i * 25}
+                                        cy={38 - (d.amount / maxChartAmount) * 32}
+                                        r="1.5"
+                                        fill={accent}
+                                    />
+                                ))}
+                                {/* Labels */}
+                                {chartData.map((d, i) => (
+                                    <text
+                                        key={`label-${i}`}
+                                        x={i * 25}
+                                        y="42"
+                                        textAnchor="middle"
+                                        fontSize="6"
+                                        fill={txm}
+                                    >
+                                        {d.label}
+                                    </text>
+                                ))}
+                            </svg>
+                        </div>
+                    )}
+                </div>
+                
+                {/* Top Category */}
+                {topCategory && (
+                    <div style={{ marginBottom: 10, padding: "6px 8px", borderRadius: 5, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.03)" }}>
+                        <div style={{ fontSize: 8, color: txm, marginBottom: 2 }}>Top spending</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 14 }}>{catI[topCategory[0]]}</span>
+                            <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 10, color: tx, textTransform: "capitalize" }}>{topCategory[0]}</div>
+                                <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>€{topCategory[1].toFixed(2)} ({periodTotal > 0 ? ((topCategory[1] / periodTotal) * 100).toFixed(0) : 0}%)</div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+                
+                {/* Budget Status */}
+                <div style={{ padding: "6px 8px", borderRadius: 5, background: pct >= 0.9 ? "rgba(231,76,60,0.1)" : pct >= 0.7 ? "rgba(245,158,11,0.1)" : "rgba(0,184,148,0.1)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 12 }}>{pct >= 0.9 ? "⚠️" : pct >= 0.7 ? "⚡" : "✅"}</span>
+                        <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 9, color: tx, fontWeight: 600 }}>
+                                {pct >= 0.9 ? "Over budget limit" : pct >= 0.7 ? "Approaching limit" : "On track"}
+                            </div>
+                            <div style={{ fontSize: 8, color: txm }}>
+                                {pct >= 0.9 ? "Consider reducing expenses" : pct >= 0.7 ? `${(remaining).toFixed(0)}€ remaining` : "Keep up the good work!"}
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>}
         </Panel>
     );
 }
 
-function RewardsPanel({ completedTasks, weeklyGoalTarget, weeklyStreak, accent, light, onClose, ambient }) {
-    const progress = Math.min(completedTasks / weeklyGoalTarget, 1);
-    const remaining = Math.max(weeklyGoalTarget - completedTasks, 0);
+function RewardsPanel({ weeklyGoalCategory, setWeeklyGoalCategory, weeklyGoalTarget, setWeeklyGoalTarget, weeklyGoalProgress, weeklyGoalLabel, weeklyGoalHelper, weeklyStreak, accent, light, onClose, ambient }) {
+    const progress = weeklyGoalTarget > 0 ? Math.min(weeklyGoalProgress / weeklyGoalTarget, 1) : 0;
+    const remaining = Math.max(weeklyGoalTarget - weeklyGoalProgress, 0);
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     const tx = light ? "#2d3436" : "#fff";
-    const rewardStatus = progress >= 1 ? "Weekly goal achieved" : remaining === 1 ? "1 task left" : `${remaining} tasks left`;
+    const goalOptions = [
+        { value: "tasks", label: "Tasks completed" },
+        { value: "events", label: "Events planned" },
+        { value: "study", label: "Study streak" },
+    ];
     const rewardSubtext = progress >= 1 ? "Reward unlocked ✦" : progress >= 0.6 ? "On track this week" : "Keep building momentum";
 
     return (
@@ -795,7 +1532,7 @@ function RewardsPanel({ completedTasks, weeklyGoalTarget, weeklyStreak, accent, 
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
                 <div>
                     <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 1.2, textTransform: "uppercase" }}>Weekly goal</div>
-                    <div style={{ marginTop: 4, fontSize: 26, fontWeight: 700, color: tx, fontFamily: "'JetBrains Mono'" }}>{completedTasks}/{weeklyGoalTarget}</div>
+                    <div style={{ marginTop: 4, fontSize: 26, fontWeight: 700, color: tx, fontFamily: "'JetBrains Mono'" }}>{weeklyGoalProgress}/{weeklyGoalTarget}</div>
                     <div style={{ marginTop: 3, fontSize: 9, color: progress >= 1 ? "#f59e0b" : progress >= 0.6 ? "#34d399" : txm, fontFamily: "'JetBrains Mono'" }}>{rewardSubtext}</div>
                 </div>
                 <div style={{ minWidth: 62, textAlign: "right" }}>
@@ -803,15 +1540,22 @@ function RewardsPanel({ completedTasks, weeklyGoalTarget, weeklyStreak, accent, 
                     <div style={{ marginTop: 4, fontSize: 20, fontWeight: 700, color: "#f59e0b", fontFamily: "'JetBrains Mono'" }}>{weeklyStreak}w</div>
                 </div>
             </div>
+            <div style={{ marginTop: 12, display: "flex", gap: 6 }} data-nodrag>
+                <select value={weeklyGoalCategory} onChange={e => setWeeklyGoalCategory(e.target.value)} style={{ flex: 1, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.05)", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 6, fontSize: 9, color: tx, outline: "none", padding: "4px 6px", backgroundColor: "#000000" }}>
+                    {goalOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                </select>
+                <input type="number" min="1" value={weeklyGoalTarget} onChange={e => setWeeklyGoalTarget(Math.max(1, Number(e.target.value) || 1))} style={{ width: 58, background: light ? "rgba(0,0,0,0.02)" : "rgba(255,255,255,0.05)", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, borderRadius: 6, padding: "4px 6px", fontSize: 9, color: tx, outline: "none", fontFamily: "'JetBrains Mono'" }} />
+            </div>
+            <div style={{ marginTop: 8, fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>{weeklyGoalLabel}</div>
             <div style={{ marginTop: 12, height: 8, borderRadius: 999, background: light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.08)", overflow: "hidden" }}>
                 <div style={{ width: `${progress * 100}%`, height: "100%", borderRadius: 999, background: "linear-gradient(90deg,#f59e0b,#fbbf24)", transition: "width 0.3s ease" }} />
             </div>
             <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                <div style={{ fontSize: 10, color: tx }}>{rewardStatus}</div>
+                <div style={{ fontSize: 10, color: tx }}>{weeklyGoalHelper}</div>
                 <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>{Math.round(progress * 100)}%</div>
             </div>
             <div style={{ marginTop: 12, padding: "8px 10px", borderRadius: 8, background: light ? "rgba(245,158,11,0.08)" : "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.18)", fontSize: 10, color: tx, lineHeight: 1.45 }}>
-                {progress >= 1 ? "Nice work — your weekly target is complete." : `Complete ${remaining} more task${remaining === 1 ? "" : "s"} to unlock this week's reward.`}
+                {progress >= 1 ? `Nice work — your ${weeklyGoalLabel.toLowerCase()} target is complete.` : `Complete ${remaining} more to hit your ${weeklyGoalLabel.toLowerCase()} goal.`}
             </div>
         </Panel>
     );
@@ -1426,7 +2170,6 @@ function TimetablePanel({ modules, timetable, onAddSlot, onRemoveSlot, accent, l
 // MAIN APP
 // ═══════════════════════════════════════════════════
 export default function App() {
-    const widgetRegistry = useRef(new Map());
     const [bg, setBg] = useState("linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)");
     const [greeting, setGreeting] = useState("Plan your week, not just your tasks.");
     const [accent, setAccent] = useState("#00cec9");
@@ -1450,16 +2193,23 @@ export default function App() {
     ]);
     const [timers, setTimers] = useState([]), [widgets, setWidgets] = useState([]);
     const [events, setEvents] = useState([
-        { id: "e1", title: "Lecture block 📚", date: new Date().toISOString().split("T")[0], time: "10:00", duration: 60, color: "#6c5ce7" },
-        { id: "e2", title: "Team checkpoint 👥", date: (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split("T")[0]; })(), time: "15:00", duration: 45, color: "#00cec9" },
+        { id: "e1", title: "Lecture block 📚", date: toLocalDateStr(new Date()), time: "10:00", duration: 60, color: "#6c5ce7" },
+        { id: "e2", title: "Team checkpoint 👥", date: (() => { const d = new Date(); d.setDate(d.getDate() + 1); return toLocalDateStr(d); })(), time: "15:00", duration: 45, color: "#00cec9" },
     ]);
-    const [expenses, setExpenses] = useState([{ id: "x1", description: "Coffee ☕", amount: 4.50, category: "food" }, { id: "x2", description: "Bus fare 🚍", amount: 20, category: "transport" }, { id: "x3", description: "Library lunch 🥪", amount: 8.90, category: "food" }]);
+    const [expenses, setExpenses] = useState([
+        { id: "x1", description: "Coffee ☕", amount: 4.50, category: "food", date: toLocalDateStr(new Date()) },
+        { id: "x2", description: "Bus fare 🚍", amount: 20, category: "transport", date: (() => { const d = new Date(); d.setDate(d.getDate() - 1); return toLocalDateStr(d); })() },
+        { id: "x3", description: "Library lunch 🥪", amount: 8.90, category: "food", date: (() => { const d = new Date(); d.setDate(d.getDate() - 2); return toLocalDateStr(d); })() }
+    ]);
     const [budget, setBudgetVal] = useState(500);
+    const [weeklyGoalCategory, setWeeklyGoalCategory] = useState("tasks");
+    const [weeklyGoalTarget, setWeeklyGoalTarget] = useState(5);
     const [input, setInput] = useState(""), [loading, setLoading] = useState(false);
     const [lennyMood, setLennyMood] = useState("neutral");
     const [msgs, setMsgs] = useState([{ role: "assistant", text: `Ready! (${LLM_CONFIG.mode === "local" ? "local LLM" : "API"})\n\n• "make it cozy"\n• "check off documentation"\n• "meeting this friday 2pm"\n• "I spent €12 on lunch"\n• "focus mode"` }]);
 
     const scrollRef = useRef(null), inputRef = useRef(null), idRef = useRef(300), ambientTimerRef = useRef(null);
+    const widgetRegistry = useRef(new Map());
     const headerRef = useRef(null);
     const [headerLockY, setHeaderLockY] = useState(0);
     useEffect(() => {
@@ -1504,8 +2254,8 @@ export default function App() {
             if (safe.length) exec(safe);
         });
     };
-    const manualAddEvent = (title, date, time, color) => {
-        setEvents(p => [...p, { id: gid(), title, date, time, duration: 60, color }]);
+    const manualAddEvent = (title, date, time, duration = 60, color) => {
+        setEvents(p => [...p, { id: gid(), title, date, time, duration, color }]);
         const inferred = inferMood(title, [{ type: "add_event" }]);
         if (inferred) setLennyMood(inferred);
         callAmbientLLM(`User added event: "${title}" on ${date}. Emotional weight?`).then(r => {
@@ -1513,8 +2263,12 @@ export default function App() {
             if (safe.length) exec(safe);
         });
     };
-    const manualAddExpense = (desc, amount, category) => {
-        setExpenses(p => [...p, { id: gid(), description: desc, amount, category }]);
+    const manualEditEvent = (id, title, date, time, duration, color) => {
+        setEvents(p => p.map(ev => ev.id === id ? { ...ev, title, date, time, duration, color } : ev));
+    };
+    const manualAddExpense = (desc, amount, category, date) => {
+        const expenseDate = date || toLocalDateStr(new Date());
+        setExpenses(p => [...p, { id: gid(), description: desc, amount: parseFloat(amount), category, date: expenseDate }]);
     };
 
     const exec = (actions) => {
@@ -1542,9 +2296,9 @@ export default function App() {
             else if (t === "change_theme" && themes[a.theme]) { setBg(themes[a.theme].bg); setAccent(themes[a.theme].accent); }
             else if (t === "set_greeting" && a.text) setGreeting(a.text);
             else if (t === "add_widget" && a.widgetType) setWidgets(p => [...p, { id: gid(), type: a.widgetType }]);
-            else if (t === "add_event") setEvents(p => [...p, { id: gid(), title: a.title || "Event", date: a.date || new Date().toISOString().split("T")[0], time: a.time || "09:00", duration: Number(a.duration) || 60, color: a.color || "#6c5ce7" }]);
+            else if (t === "add_event") setEvents(p => [...p, { id: gid(), title: a.title || "Event", date: a.date || toLocalDateStr(new Date()), time: a.time || "09:00", duration: Number(a.duration) || 60, color: a.color || "#6c5ce7" }]);
             else if (t === "delete_event" && a.title) setEvents(p => p.filter(e => !String(e.title).toLowerCase().includes(String(a.title).toLowerCase())));
-            else if (t === "add_expense") setExpenses(p => [...p, { id: gid(), description: a.description || "Expense", amount: Number(a.amount) || 0, category: a.category || "other" }]);
+            else if (t === "add_expense") setExpenses(p => [...p, { id: gid(), description: a.description || "Expense", amount: Number(a.amount) || 0, category: a.category || "other", date: a.date || toLocalDateStr(new Date()) }]);
             else if (t === "add_note") setPostits(p => {
                 const pos = getNextPostitPosition(p.length);
                 return [
@@ -1640,17 +2394,23 @@ export default function App() {
     const weeklySpend = expenses.reduce((s, e) => s + e.amount, 0);
     const budgetProgress = budget > 0 ? Math.min(100, Math.round((weeklySpend / budget) * 100)) : 0;
     const studyStreak = Math.min(7, Math.max(1, activeTasks + completedTasks));
-    const weeklyGoalTarget = 5;
-    const weeklyGoalProgress = Math.min(completedTasks, weeklyGoalTarget);
+    const weeklyGoalSources = {
+        tasks: { label: "Tasks completed", value: completedTasks, unit: "task" },
+        events: { label: "Events planned", value: upcomingEvents, unit: "event" },
+        study: { label: "Study streak", value: studyStreak, unit: "day" },
+    };
+    const activeWeeklyGoal = weeklyGoalSources[weeklyGoalCategory] || weeklyGoalSources.tasks;
+    const weeklyGoalProgress = Math.min(activeWeeklyGoal.value, weeklyGoalTarget);
     const weeklyGoalMet = weeklyGoalProgress >= weeklyGoalTarget;
-    const weeklyGoalHelper = weeklyGoalMet ? "Reward unlocked" : weeklyGoalTarget - weeklyGoalProgress === 1 ? "1 task left" : `${weeklyGoalTarget - weeklyGoalProgress} tasks left`;
+    const weeklyGoalRemaining = Math.max(weeklyGoalTarget - weeklyGoalProgress, 0);
+    const weeklyGoalHelper = weeklyGoalMet ? "Reward unlocked" : weeklyGoalRemaining === 1 ? `1 ${activeWeeklyGoal.unit} left` : `${weeklyGoalRemaining} ${activeWeeklyGoal.unit}s left`;
     const totalModuleCredits = modules.reduce((s, m) => s + (m.credits || 5), 0);
     const statCards = [
         { label: "Active tasks", value: activeTasks, helper: activeTasks <= 2 ? "On track" : "Busy week" },
         { label: "Upcoming events", value: upcomingEvents, helper: upcomingEvents > 0 ? "Plan ahead" : "Clear calendar" },
         { label: "Budget used", value: `${budgetProgress}%`, helper: budgetProgress >= 70 ? "Watch spend" : "On track" },
         { label: "Study streak", value: `${studyStreak}d`, helper: studyStreak >= 5 ? "Building rhythm" : "Momentum" },
-        { label: "Weekly goal", value: `${weeklyGoalProgress}/${weeklyGoalTarget}`, helper: weeklyGoalHelper },
+        { label: activeWeeklyGoal.label, value: `${weeklyGoalProgress}/${weeklyGoalTarget}`, helper: weeklyGoalHelper },
         { label: "Modules", value: modules.length > 0 ? `${modules.length}` : "—", helper: modules.length > 0 ? `${totalModuleCredits} ECTS` : "Add via 🎓" },
     ];
     const quickThemes = [
@@ -1706,6 +2466,7 @@ export default function App() {
     };
 
     return <WidgetRegistryCtx.Provider value={widgetRegistry}>
+        <>
         <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,700;1,400&family=JetBrains+Mono:wght@200;400;600;700&display=swap" rel="stylesheet" />
         <style>{`
             @keyframes bk{0%,60%,100%{transform:translateY(0);opacity:.3}30%{transform:translateY(-5px);opacity:.8}}
@@ -1810,9 +2571,9 @@ export default function App() {
 
                 <HeaderLockCtx.Provider value={headerLockY}>
                 {showTasks && <TasksPanel tasks={tasks} onToggle={id => setTasks(t => t.map(tk => tk.id === id ? { ...tk, done: !tk.done } : tk))} onEditTask={(id, v) => setTasks(t => t.map(tk => tk.id === id ? { ...tk, text: v } : tk))} onRequestSplit={t => send(`split the task "${t}" into subtasks`)} onAddTask={manualAddTask} accent={accent} light={light} onClose={() => setShowTasks(false)} ambient={ambient} />}
-                {showCal && <CalendarPanel events={events} onDeleteEvent={id => setEvents(e => e.filter(ev => ev.id !== id))} onAddEvent={manualAddEvent} accent={accent} light={light} onClose={() => setShowCal(false)} ambient={ambient} />}
+                {showCal && <CalendarPanel events={events} onDeleteEvent={id => setEvents(e => e.filter(ev => ev.id !== id))} onAddEvent={manualAddEvent} onEditEvent={manualEditEvent} accent={accent} light={light} onClose={() => setShowCal(false)} ambient={ambient} />}
                 {showBudget && <BudgetPanel expenses={expenses} budget={budget} accent={accent} light={light} onClose={() => setShowBudget(false)} onDeleteExpense={id => setExpenses(e => e.filter(ex => ex.id !== id))} onAddExpense={manualAddExpense} ambient={ambient} />}
-                {showRewards && <RewardsPanel completedTasks={completedTasks} weeklyGoalTarget={weeklyGoalTarget} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" />}
+                {showRewards && <RewardsPanel weeklyGoalCategory={weeklyGoalCategory} setWeeklyGoalCategory={setWeeklyGoalCategory} weeklyGoalTarget={weeklyGoalTarget} setWeeklyGoalTarget={setWeeklyGoalTarget} weeklyGoalProgress={weeklyGoalProgress} weeklyGoalLabel={activeWeeklyGoal.label} weeklyGoalHelper={weeklyGoalHelper} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" />}
                 {showWeather && <WeatherWidget light={light} accent={accent} ambient={ambient} onClose={() => setShowWeather(false)} />}
                 {showTCDModules && <TCDModulesPanel modules={modules} tcdDegree={tcdDegree} onSetDegree={setTcdDegree} onAddModule={m => setModules(p => p.some(x => x.code === m.code) ? p : [...p, m])} onRemoveModule={id => setModules(p => p.filter(m => m.id !== id))} accent={accent} light={light} onClose={() => setShowTCDModules(false)} ambient={ambient} />}
                 {showTimetable && <TimetablePanel modules={modules} timetable={timetable} onAddSlot={s => setTimetable(p => [...p, s])} onRemoveSlot={id => setTimetable(p => p.filter(s => s.id !== id))} accent={accent} light={light} onClose={() => setShowTimetable(false)} ambient={ambient} />}
@@ -1874,12 +2635,6 @@ export default function App() {
                 {!postits.length && !timers.length && !widgets.length && !showTasks && !showCal && !showBudget && !showRewards && !showWeather && !showTCDModules && !showTimetable && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", color: txs, userSelect: "none", zIndex: 5 }}>
                     <div style={{ fontSize: 40, marginBottom: 8 }}>✦</div><div style={{ fontFamily: "'JetBrains Mono'", fontSize: 10, letterSpacing: 2 }}>YOUR STUDENT DASHBOARD IS CLEAR</div><div style={{ marginTop: 8, fontSize: 11, color: txm }}>Turn panels back on or ask the copilot to add something.</div>
                 </div>}
-                {/* Snap hint */}
-                <div style={{ position: "absolute", bottom: 12, left: 12, zIndex: 10, pointerEvents: "none" }}>
-                    <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, letterSpacing: 1, padding: "3px 8px", borderRadius: 999, color: light ? "rgba(45,52,54,0.28)" : "rgba(255,255,255,0.18)", background: light ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)", border: `1px solid ${light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.06)"}` }}>
-                        Hold Alt to freely overlap widgets
-                    </span>
-                </div>
                 </HeaderLockCtx.Provider>
             </div>
 
@@ -1918,5 +2673,12 @@ export default function App() {
                 </div>
             </div>
         </div>
+        </>
     </WidgetRegistryCtx.Provider>;
 }
+// ═══════════════════════════════════════════════════
+// APP WRAPPER
+// ═══════════════════════════════════════════════════
+// export default function App() {
+//     return <Dashboard />;
+// }
