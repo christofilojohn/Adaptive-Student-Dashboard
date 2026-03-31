@@ -655,6 +655,8 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     const [desc, setDesc] = useState(""), [amt, setAmt] = useState(""), [cat, setCat] = useState("other");
     const [error, setError] = useState("");
     const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split('T')[0]);
+    const [insightsPeriod, setInsightsPeriod] = useState("weekly"); // "weekly" or "monthly"
+    const [chartType, setChartType] = useState("histogram"); // "histogram" or "line"
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
     const tx = light ? "#2d3436" : "#fff";
     const total = expenses.reduce((s, e) => s + e.amount, 0);
@@ -700,6 +702,7 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
         const [year, month, day] = datePart.split('-').map(Number);
         return new Date(year, month - 1, day);
     };
+    // Weekly calculations
     const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0,0,0,0);
     const startOfLastWeek = new Date(startOfWeek); startOfLastWeek.setDate(startOfWeek.getDate() - 7);
     const endOfLastWeek = new Date(startOfWeek); endOfLastWeek.setMilliseconds(-1);
@@ -710,23 +713,53 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
     const lastWeekTotal = lastWeekExpenses.reduce((s, e) => s + e.amount, 0);
     const weeklyChange = lastWeekTotal > 0 ? ((thisWeekTotal - lastWeekTotal) / lastWeekTotal * 100) : 0;
     
-    // Highest spending category (THIS WEEK ONLY)
-    const weekCatT = {};
-    thisWeekExpenses.forEach(e => { weekCatT[e.category] = (weekCatT[e.category] || 0) + e.amount; });
-    const sortedCats = Object.entries(weekCatT).sort((a, b) => b[1] - a[1]);
+    // Monthly calculations
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastMonth = new Date(startOfMonth.getFullYear(), startOfMonth.getMonth() - 1, 1);
+    const endOfLastMonth = new Date(startOfMonth.getTime() - 1);
+    
+    const thisMonthExpenses = expenses.filter(e => parseLocalDate(e.date) >= startOfMonth);
+    const lastMonthExpenses = expenses.filter(e => { const d = parseLocalDate(e.date); return d >= startOfLastMonth && d < startOfMonth; });
+    const thisMonthTotal = thisMonthExpenses.reduce((s, e) => s + e.amount, 0);
+    const lastMonthTotal = lastMonthExpenses.reduce((s, e) => s + e.amount, 0);
+    const monthlyChange = lastMonthTotal > 0 ? ((thisMonthTotal - lastMonthTotal) / lastMonthTotal * 100) : 0;
+    
+    // Highest spending category (THIS WEEK/MONTH)
+    const periodExpenses = insightsPeriod === "weekly" ? thisWeekExpenses : thisMonthExpenses;
+    const periodTotal = insightsPeriod === "weekly" ? thisWeekTotal : thisMonthTotal;
+    const periodCatT = {};
+    periodExpenses.forEach(e => { periodCatT[e.category] = (periodCatT[e.category] || 0) + e.amount; });
+    const sortedCats = Object.entries(periodCatT).sort((a, b) => b[1] - a[1]);
     const topCategory = sortedCats[0];
     
-    // Daily spending for last 7 days (for mini chart)
-    const dailySpending = [];
-    for (let i = 6; i >= 0; i--) {
-        const d = new Date(now); d.setDate(now.getDate() - i); d.setHours(0,0,0,0);
-        const dayTotal = expenses.filter(e => {
-            const ed = parseLocalDate(e.date);
-            return ed.toDateString() === d.toDateString();
-        }).reduce((s, e) => s + e.amount, 0);
-        dailySpending.push({ day: d.toLocaleDateString('en', { weekday: 'narrow' }), amount: dayTotal });
+    // Daily/Weekly spending data based on period
+    let chartData = [];
+    if (insightsPeriod === "weekly") {
+        // Last 7 days
+        for (let i = 6; i >= 0; i--) {
+            const d = new Date(now); d.setDate(now.getDate() - i); d.setHours(0,0,0,0);
+            const dayTotal = expenses.filter(e => {
+                const ed = parseLocalDate(e.date);
+                return ed.toDateString() === d.toDateString();
+            }).reduce((s, e) => s + e.amount, 0);
+            chartData.push({ label: d.toLocaleDateString('en', { weekday: 'narrow' }), amount: dayTotal, date: d });
+        }
+    } else {
+        // Last 30 days of current month + last month
+        const startDate = new Date(now);
+        startDate.setDate(1);
+        for (let i = 0; i < 30; i++) {
+            const d = new Date(startDate);
+            d.setDate(startDate.getDate() + i);
+            if (d.getMonth() !== startOfMonth.getMonth()) break;
+            const dayTotal = expenses.filter(e => {
+                const ed = parseLocalDate(e.date);
+                return ed.toDateString() === d.toDateString();
+            }).reduce((s, e) => s + e.amount, 0);
+            chartData.push({ label: d.getDate().toString(), amount: dayTotal, date: d });
+        }
     }
-    const maxDaily = Math.max(...dailySpending.map(d => d.amount), 1);
+    const maxChartAmount = Math.max(...chartData.map(d => d.amount), 1);
     return (
         <Panel x={370} y={320} width={250} title="Budget" icon="💰" light={light} onClose={onClose} ambient={ambient} accent={accent}>
             <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 8 }}>
@@ -789,29 +822,80 @@ function BudgetPanel({ expenses, budget, accent, light, onClose, onDeleteExpense
                 {error && <div style={{ fontSize: 8, color: "#e74c3c", fontFamily: "'JetBrains Mono'" }}>{error}</div>}
             </div>}
             {showInsights && expenses.length > 0 && <div className="anim-panel" style={{ marginTop: 6, padding: 8, borderRadius: 6, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.05)", border: `1px solid ${light ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.08)"}` }}>
-                {/* Weekly Trend */}
+                {/* Period and Chart Type Toggles */}
+                <div style={{ display: "flex", gap: 3, marginBottom: 8 }}>
+                    <div style={{ display: "flex", gap: 2 }}>
+                        <button onClick={() => { setInsightsPeriod("weekly"); }} style={{ padding: "2px 6px", fontSize: 8, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: insightsPeriod === "weekly" ? accent : light ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.08)", border: `1px solid ${insightsPeriod === "weekly" ? accent : light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`, borderRadius: 3, color: insightsPeriod === "weekly" ? (light ? "#fff" : "#000") : txm, transition: "all 0.2s" }}>Weekly</button>
+                        <button onClick={() => { setInsightsPeriod("monthly"); setChartType("line"); }} style={{ padding: "2px 6px", fontSize: 8, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: insightsPeriod === "monthly" ? accent : light ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.08)", border: `1px solid ${insightsPeriod === "monthly" ? accent : light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`, borderRadius: 3, color: insightsPeriod === "monthly" ? (light ? "#fff" : "#000") : txm, transition: "all 0.2s" }}>Monthly</button>
+                    </div>
+                    <div style={{ display: "flex", gap: 2, marginLeft: "auto" }}>
+                        {insightsPeriod === "weekly" && <button onClick={() => setChartType("histogram")} style={{ padding: "2px 6px", fontSize: 8, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: chartType === "histogram" ? accent : light ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.08)", border: `1px solid ${chartType === "histogram" ? accent : light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`, borderRadius: 3, color: chartType === "histogram" ? (light ? "#fff" : "#000") : txm, transition: "all 0.2s" }}>📊</button>}
+                        <button onClick={() => setChartType("line")} style={{ padding: "2px 6px", fontSize: 8, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: chartType === "line" ? accent : light ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.08)", border: `1px solid ${chartType === "line" ? accent : light ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.1)"}`, borderRadius: 3, color: chartType === "line" ? (light ? "#fff" : "#000") : txm, transition: "all 0.2s" }}>📈</button>
+                    </div>
+                </div>
+
+                {/* Spending Trend */}
                 <div style={{ marginBottom: 10 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                        <span style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>This week</span>
-                        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: weeklyChange > 0 ? "#e74c3c" : weeklyChange < 0 ? "#00b894" : txm }}>
-                            {weeklyChange > 0 ? "↑" : weeklyChange < 0 ? "↓" : "→"} {lastWeekTotal > 0 ? Math.abs(weeklyChange).toFixed(0) + "%" : "New"} {lastWeekTotal > 0 ? "vs last week" : "data"}
+                        <span style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'" }}>This {insightsPeriod}</span>
+                        <span style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: (insightsPeriod === "weekly" ? weeklyChange : monthlyChange) > 0 ? "#e74c3c" : (insightsPeriod === "weekly" ? weeklyChange : monthlyChange) < 0 ? "#00b894" : txm }}>
+                            {(insightsPeriod === "weekly" ? weeklyChange : monthlyChange) > 0 ? "↑" : (insightsPeriod === "weekly" ? weeklyChange : monthlyChange) < 0 ? "↓" : "→"} {(insightsPeriod === "weekly" ? lastWeekTotal : lastMonthTotal) > 0 ? Math.abs(insightsPeriod === "weekly" ? weeklyChange : monthlyChange).toFixed(0) + "%" : "New"} {(insightsPeriod === "weekly" ? lastWeekTotal : lastMonthTotal) > 0 ? "vs last " + insightsPeriod : "data"}
                         </span>
                     </div>
-                    {/* Mini bar chart */}
-                    <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 32, padding: "4px 0" }}>
-                        {dailySpending.map((d, i) => (
-                            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-                                <div style={{ 
-                                    width: "100%", 
-                                    height: `${Math.max((d.amount / maxDaily) * 20, 2)}px`, 
-                                    background: d.amount === maxDaily ? accent : light ? "rgba(0,0,0,0.2)" : "rgba(255,255,255,0.3)",
-                                    borderRadius: 2,
-                                    transition: "all 0.3s"
-                                }} />
-                                <span style={{ fontSize: 7, color: txm }}>{d.day}</span>
-                            </div>
-                        ))}
-                    </div>
+                    {/* Chart - Histogram or Line */}
+                    {chartType === "histogram" ? (
+                        <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 38, padding: "4px 0", overflowX: "auto", overflowY: "hidden", minHeight: 50 }}>
+                            {chartData.map((d, i) => (
+                                <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 28, flex: "0 0 auto" }}>
+                                    <div style={{ 
+                                        width: 22, 
+                                        height: `${Math.max((d.amount / maxChartAmount) * 20, 2)}px`, 
+                                        background: d.amount === Math.max(...chartData.map(x => x.amount)) ? accent : light ? "rgba(0,0,0,0.2)" : "rgba(255,255,255,0.3)",
+                                        borderRadius: 2,
+                                        transition: "all 0.3s"
+                                    }} />
+                                    <span style={{ fontSize: 7, color: txm, whiteSpace: "nowrap" }}>{d.label}</span>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div style={{ width: "100%", height: 45, position: "relative", marginBottom: 4, overflowX: "auto" }}>
+                            <svg width="100%" height="45" viewBox={`0 0 ${Math.max(chartData.length - 1, 1) * 25} 45`} preserveAspectRatio="none" style={{ minWidth: "100%", overflow: "visible" }}>
+                                {/* Grid lines */}
+                                <line x1="0" y1="38" x2={Math.max(chartData.length - 1, 1) * 25} y2="38" stroke={light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"} strokeWidth="0.5" />
+                                {/* Line chart polyline */}
+                                <polyline
+                                    points={chartData.map((d, i) => `${i * 25},${38 - (d.amount / maxChartAmount) * 32}`).join(" ")}
+                                    fill="none"
+                                    stroke={accent}
+                                    strokeWidth="1"
+                                />
+                                {/* Points */}
+                                {chartData.map((d, i) => (
+                                    <circle
+                                        key={i}
+                                        cx={i * 25}
+                                        cy={38 - (d.amount / maxChartAmount) * 32}
+                                        r="1.5"
+                                        fill={accent}
+                                    />
+                                ))}
+                                {/* Labels */}
+                                {chartData.map((d, i) => (
+                                    <text
+                                        key={`label-${i}`}
+                                        x={i * 25}
+                                        y="42"
+                                        textAnchor="middle"
+                                        fontSize="6"
+                                        fill={txm}
+                                    >
+                                        {d.label}
+                                    </text>
+                                ))}
+                            </svg>
+                        </div>
+                    )}
                 </div>
                 
                 {/* Top Category */}
