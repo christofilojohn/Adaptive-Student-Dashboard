@@ -268,27 +268,30 @@ function snapPos(rawX, rawY, thisId, registry, dragRef, minY) {
 
     let resolved = false;
     let iterations = 0;
-    while (!resolved && iterations++ < 5) {
-        resolved = true;
-        registry.current.forEach((entry, id) => {
-            if (id === thisId || !entry.el) return;
-            const ox = entry.x;
-            const oy = entry.y;
-            const ow = entry.el.offsetWidth;
-            const oh = entry.el.offsetHeight;
-            if (x < ox + ow && x + w > ox && y < oy + oh && y + h > oy) {
-                resolved = false;
-                const pushR = (ox + ow) - x;
-                const pushL = (x + w) - ox;
-                const pushD = (oy + oh) - y;
-                const pushU = (y + h) - oy;
-                if (minPush === pushR) x = ox + ow;
-                else if (minPush === pushL) x = ox - w;
-                else if (minPush === pushD) y = oy + oh;
-                else y = Math.max(minY, oy - h);
+            while (!resolved && iterations++ < 5) {
+                resolved = true;
+                registry.current.forEach((entry, id) => {
+                    if (id === thisId || !entry.el) return;
+                    const ox = entry.x;
+                    const oy = entry.y;
+                    const ow = entry.el.offsetWidth;
+                    const oh = entry.el.offsetHeight;
+                    if (x < ox + ow && x + w > ox && y < oy + oh && y + h > oy) {
+                        resolved = false;
+                        const pushR = (ox + ow) - x;
+                        const pushL = (x + w) - ox;
+                        const pushD = (oy + oh) - y;
+                        const pushU = (y + h) - oy;
+                        const minPush = Math.min(pushR, pushL, pushD, pushU);
+                        if (minPush === pushR) x = ox + ow;
+                        else if (minPush === pushL) x = ox - w;
+                        else if (minPush === pushD) y = oy + oh;
+                        else y = Math.max(minY, oy - h);
+                    }
+                });
+            }
 
     return { x, y: Math.max(minY, y) };
-}
 
 function useDraggable(ix, iy) {
     const minY = useContext(HeaderLockCtx);
