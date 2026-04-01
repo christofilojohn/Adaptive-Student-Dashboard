@@ -24,6 +24,11 @@ export function CalendarPanel({ events, onDeleteEvent, onAddEvent, onEditEvent, 
     const evColors = ["#6c5ce7", "#00cec9", "#e17055", "#00b894", "#fdcb6e", "#e84393", "#74b9ff", "#a29bfe"];
 
     const exportICS = () => {
+        const escapeICSText = (value = "") => String(value)
+            .replace(/\\/g, "\\\\")
+            .replace(/\r?\n/g, "\\n")
+            .replace(/;/g, "\\;")
+            .replace(/,/g, "\\,");
         const formatICSDateTime = (date) => {
             const y = date.getFullYear();
             const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -41,7 +46,7 @@ export function CalendarPanel({ events, onDeleteEvent, onAddEvent, onEditEvent, 
             const start = new Date(year, (month || 1) - 1, day || 1, hours || 0, minutes || 0, 0);
             const end = new Date(start);
             end.setMinutes(end.getMinutes() + (e.duration || 60));
-            ics += `BEGIN:VEVENT\nDTSTART:${formatICSDateTime(start)}\nDTEND:${formatICSDateTime(end)}\nSUMMARY:${e.title}\nEND:VEVENT\n`;
+            ics += `BEGIN:VEVENT\nDTSTART:${formatICSDateTime(start)}\nDTEND:${formatICSDateTime(end)}\nSUMMARY:${escapeICSText(e.title)}\nEND:VEVENT\n`;
         });
         ics += "END:VCALENDAR";
         const a = document.createElement("a");

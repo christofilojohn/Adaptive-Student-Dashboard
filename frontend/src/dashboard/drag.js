@@ -144,6 +144,14 @@ export function useDraggable(ix, iy) {
     const [pos, setPos] = useState({ x: ix, y: Math.max(minY, iy) });
     const dr = useRef(false);
     const off = useRef({ x: 0, y: 0 });
+    const moveHandlerRef = useRef(null);
+    const upHandlerRef = useRef(null);
+
+    useEffect(() => () => {
+        dr.current = false;
+        if (moveHandlerRef.current) window.removeEventListener("mousemove", moveHandlerRef.current);
+        if (upHandlerRef.current) window.removeEventListener("mouseup", upHandlerRef.current);
+    }, []);
 
     useEffect(() => {
         if (!registry) return;
@@ -190,7 +198,11 @@ export function useDraggable(ix, iy) {
             dr.current = false;
             window.removeEventListener("mousemove", mv);
             window.removeEventListener("mouseup", up);
+            moveHandlerRef.current = null;
+            upHandlerRef.current = null;
         };
+        moveHandlerRef.current = mv;
+        upHandlerRef.current = up;
         window.addEventListener("mousemove", mv);
         window.addEventListener("mouseup", up);
     }, [pos.x, pos.y, registry]);
