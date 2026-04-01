@@ -223,24 +223,96 @@ async function callAmbientLLM(contextMsg) {
 // ═══════════════════════════════════════════════════
 // Shared context so every draggable knows how tall the locked header area is
 const HeaderLockCtx = createContext(0);
+const DragBoundsCtx = createContext({ width: 0, height: 0 });
 
 const WidgetRegistryCtx = createContext(null);
 
 const SNAP_GRID = 20;
 const SNAP_EDGE_THRESHOLD = 18;
 
-function snapPos(rawX, rawY, thisId, registry, dragRef, minY) {
-    let x = rawX;
-    let y = Math.max(minY, rawY);
-    const el = dragRef?.current;
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
-    x = Math.round(x / SNAP_GRID) * SNAP_GRID;
-    y = Math.max(minY, Math.round(y / SNAP_GRID) * SNAP_GRID);
+function getBoundsMetrics(bounds, el, minY) {
+    const fallbackWidth = typeof window !== "undefined" ? window.innerWidth : 0;
+    const fallbackHeight = typeof window !== "undefined" ? window.innerHeight : minY;
+    const width = bounds?.width || fallbackWidth;
+    const height = bounds?.height || fallbackHeight;
+    const w = el?.offsetWidth || 0;
+    const h = el?.offsetHeight || 0;
+    return {
+        minX: 0,
+        minY,
+        maxX: Math.max(0, width - w),
+        maxY: Math.max(minY, height - h),
+        width: w,
+        height: h,
+    };
+}
+
+function clampToBounds(rawX, rawY, el, minY, bounds) {
+    const metrics = getBoundsMetrics(bounds, el, minY);
+    return {
+        x: clamp(rawX, metrics.minX, metrics.maxX),
+        y: clamp(rawY, metrics.minY, metrics.maxY),
+        metrics,
+    };
+}
+
+function overlapsAt(x, y, w, h, thisId, registry) {
+    if (!registry?.current) return false;
+    for (const [id, entry] of registry.current.entries()) {
+        if (id === thisId || !entry.el) continue;
+        const ox = entry.x;
+        const oy = entry.y;
+        const ow = entry.el.offsetWidth;
+        const oh = entry.el.offsetHeight;
+        if (x < ox + ow && x + w > ox && y < oy + oh && y + h > oy) return true;
+    }
+    return false;
+}
+
+function buildStops(min, max) {
+    const stops = [];
+    for (let value = min; value <= max; value += SNAP_GRID) stops.push(value);
+    if (!stops.length || stops[stops.length - 1] !== max) stops.push(max);
+    return stops;
+}
+
+function findOpenSlot(preferredX, preferredY, thisId, registry, metrics) {
+    if (!registry?.current || !metrics.width || !metrics.height) return { x: preferredX, y: preferredY };
+    if (!overlapsAt(preferredX, preferredY, metrics.width, metrics.height, thisId, registry)) return { x: preferredX, y: preferredY };
+
+    const candidates = [];
+    const xStops = buildStops(metrics.minX, metrics.maxX);
+    const yStops = buildStops(metrics.minY, metrics.maxY);
+
+    yStops.forEach(y => {
+        xStops.forEach(x => {
+            candidates.push({ x, y, dist: Math.abs(x - preferredX) + Math.abs(y - preferredY) });
+        });
+    });
+
+    candidates.sort((a, b) => a.dist - b.dist);
+
+    for (const candidate of candidates) {
+        if (!overlapsAt(candidate.x, candidate.y, metrics.width, metrics.height, thisId, registry)) {
+            return { x: candidate.x, y: candidate.y };
+        }
+    }
+
+    return { x: preferredX, y: preferredY };
+}
+
+function getSafePosition(rawX, rawY, thisId, registry, dragRef, minY, bounds, snapToGrid = true) {
+    const el = dragRef?.current;
+    const { x: clampedX, y: clampedY, metrics } = clampToBounds(rawX, rawY, el, minY, bounds);
+    let x = snapToGrid ? Math.round(clampedX / SNAP_GRID) * SNAP_GRID : clampedX;
+    let y = snapToGrid ? Math.round(clampedY / SNAP_GRID) * SNAP_GRID : clampedY;
+
+    x = clamp(x, metrics.minX, metrics.maxX);
+    y = clamp(y, metrics.minY, metrics.maxY);
 
     if (!el || !registry?.current) return { x, y };
-
-    const w = el.offsetWidth;
-    const h = el.offsetHeight;
 
     let bestXSnap = null;
     let bestYSnap = null;
@@ -254,53 +326,33 @@ function snapPos(rawX, rawY, thisId, registry, dragRef, minY) {
         const ow = entry.el.offsetWidth;
         const oh = entry.el.offsetHeight;
         const d1x = Math.abs(x - (ox + ow));
-        const d2x = Math.abs((x + w) - ox);
+        const d2x = Math.abs((x + metrics.width) - ox);
         if (d1x < bestXDist) { bestXDist = d1x; bestXSnap = ox + ow; }
-        if (d2x < bestXDist) { bestXDist = d2x; bestXSnap = ox - w; }
+        if (d2x < bestXDist) { bestXDist = d2x; bestXSnap = ox - metrics.width; }
         const d1y = Math.abs(y - (oy + oh));
-        const d2y = Math.abs((y + h) - oy);
+        const d2y = Math.abs((y + metrics.height) - oy);
         if (d1y < bestYDist) { bestYDist = d1y; bestYSnap = oy + oh; }
-        if (d2y < bestYDist) { bestYDist = d2y; bestYSnap = oy - h; }
+        if (d2y < bestYDist) { bestYDist = d2y; bestYSnap = oy - metrics.height; }
     });
 
-    if (bestXSnap !== null) x = bestXSnap;
-    if (bestYSnap !== null) y = bestYSnap;
+    if (snapToGrid) {
+        if (bestXSnap !== null) x = clamp(bestXSnap, metrics.minX, metrics.maxX);
+        if (bestYSnap !== null) y = clamp(bestYSnap, metrics.minY, metrics.maxY);
+    }
 
-    let resolved = false;
-    let iterations = 0;
-            while (!resolved && iterations++ < 5) {
-                resolved = true;
-                registry.current.forEach((entry, id) => {
-                    if (id === thisId || !entry.el) return;
-                    const ox = entry.x;
-                    const oy = entry.y;
-                    const ow = entry.el.offsetWidth;
-                    const oh = entry.el.offsetHeight;
-                    if (x < ox + ow && x + w > ox && y < oy + oh && y + h > oy) {
-                        resolved = false;
-                        const pushR = (ox + ow) - x;
-                        const pushL = (x + w) - ox;
-                        const pushD = (oy + oh) - y;
-                        const pushU = (y + h) - oy;
-                        const minPush = Math.min(pushR, pushL, pushD, pushU);
-                        if (minPush === pushR) x = ox + ow;
-                        else if (minPush === pushL) x = ox - w;
-                        else if (minPush === pushD) y = oy + oh;
-                        else y = Math.max(minY, oy - h);
-                    }
-                });
-            }
-
-    return { x, y: Math.max(minY, y) };
+    return findOpenSlot(x, y, thisId, registry, metrics);
 }
 
 function useDraggable(ix, iy) {
     const minY = useContext(HeaderLockCtx);
+    const bounds = useContext(DragBoundsCtx);
     const registry = useContext(WidgetRegistryCtx);
     const minYRef = useRef(minY);
+    const boundsRef = useRef(bounds);
     const dragRef = useRef(null);
     const idRef = useRef(`w_${Math.random().toString(36).slice(2)}`);
     useEffect(() => { minYRef.current = minY; }, [minY]);
+    useEffect(() => { boundsRef.current = bounds; }, [bounds]);
     const [pos, setPos] = useState({ x: ix, y: Math.max(minY, iy) });
     const dr = useRef(false), off = useRef({ x: 0, y: 0 });
 
@@ -320,6 +372,14 @@ function useDraggable(ix, iy) {
         }
     }, [pos, registry]);
 
+    useEffect(() => {
+        const frame = window.requestAnimationFrame(() => {
+            const safePos = getSafePosition(pos.x, pos.y, idRef.current, registry, dragRef, minYRef.current, boundsRef.current, false);
+            setPos(cur => cur.x === safePos.x && cur.y === safePos.y ? cur : safePos);
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [minY, registry, bounds?.width, bounds?.height]);
+
     const onMouseDown = useCallback((e) => {
         if (e.target.closest("button, input, textarea, select, a, [data-nodrag]")) return;
         e.preventDefault(); dr.current = true; off.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
@@ -327,11 +387,7 @@ function useDraggable(ix, iy) {
             if (!dr.current) return;
             const rawX = ev.clientX - off.current.x;
             const rawY = ev.clientY - off.current.y;
-            if (ev.altKey) {
-                setPos({ x: rawX, y: Math.max(minYRef.current, rawY) });
-            } else {
-                setPos(snapPos(rawX, rawY, idRef.current, registry, dragRef, minYRef.current));
-            }
+            setPos(getSafePosition(rawX, rawY, idRef.current, registry, dragRef, minYRef.current, boundsRef.current, !ev.altKey));
         };
         const up = () => { dr.current = false; window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
         window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
@@ -2210,10 +2266,20 @@ export default function App() {
 
     const scrollRef = useRef(null), inputRef = useRef(null), idRef = useRef(300), ambientTimerRef = useRef(null);
     const widgetRegistry = useRef(new Map());
+    const canvasRef = useRef(null);
     const headerRef = useRef(null);
+    const [canvasBounds, setCanvasBounds] = useState({ width: 0, height: 0 });
     const [headerLockY, setHeaderLockY] = useState(0);
     useEffect(() => {
+        if (!canvasRef.current) return;
+        setCanvasBounds({ width: canvasRef.current.clientWidth, height: canvasRef.current.clientHeight });
+        const ro = new ResizeObserver(entries => setCanvasBounds({ width: entries[0].contentRect.width, height: entries[0].contentRect.height }));
+        ro.observe(canvasRef.current);
+        return () => ro.disconnect();
+    }, []);
+    useEffect(() => {
         if (!headerRef.current) return;
+        setHeaderLockY(headerRef.current.getBoundingClientRect().height + 8);
         const ro = new ResizeObserver(entries => setHeaderLockY(entries[0].contentRect.height + 8));
         ro.observe(headerRef.current);
         return () => ro.disconnect();
@@ -2466,6 +2532,7 @@ export default function App() {
     };
 
     return <WidgetRegistryCtx.Provider value={widgetRegistry}>
+        <DragBoundsCtx.Provider value={canvasBounds}>
         <>
         <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,700;1,400&family=JetBrains+Mono:wght@200;400;600;700&display=swap" rel="stylesheet" />
         <style>{`
@@ -2484,7 +2551,7 @@ export default function App() {
         `}</style>
 
         <div style={{ width: "100vw", height: "100vh", overflow: "hidden", display: "flex", background: bg, fontFamily: "'DM Sans',sans-serif", color: tx, transition: "background 1.2s ease, color 0.8s" }}>
-            <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+            <div ref={canvasRef} style={{ flex: 1, position: "relative", overflow: "hidden" }}>
 
                 {/* Ambient layers */}
                 <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 1, background: ambientBg, transition: "background 2.5s" }} />
@@ -2494,7 +2561,7 @@ export default function App() {
                 <LennyBuddy mood={lennyMood} glowColor={ambient.glowColor !== "transparent" ? ambient.glowColor : accent} light={light} loading={loading} />
 
                 {/* Header */}
-                <div style={{ position: "relative", zIndex: 50, padding: "14px 24px 8px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}>
+                <div ref={headerRef} style={{ position: "relative", zIndex: 50, padding: "14px 24px 8px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}>
                     <div style={{ maxWidth: 900 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
                             <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, color: txm, letterSpacing: 1.7, textTransform: "uppercase" }}>Adaptive Dashboard</span>
@@ -2674,6 +2741,7 @@ export default function App() {
             </div>
         </div>
         </>
+        </DragBoundsCtx.Provider>
     </WidgetRegistryCtx.Provider>;
 }
 // ═══════════════════════════════════════════════════
