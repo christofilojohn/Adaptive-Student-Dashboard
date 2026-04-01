@@ -24,13 +24,24 @@ export function CalendarPanel({ events, onDeleteEvent, onAddEvent, onEditEvent, 
     const evColors = ["#6c5ce7", "#00cec9", "#e17055", "#00b894", "#fdcb6e", "#e84393", "#74b9ff", "#a29bfe"];
 
     const exportICS = () => {
+        const formatICSDateTime = (date) => {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, "0");
+            const d = String(date.getDate()).padStart(2, "0");
+            const h = String(date.getHours()).padStart(2, "0");
+            const min = String(date.getMinutes()).padStart(2, "0");
+            const sec = String(date.getSeconds()).padStart(2, "0");
+            return `${y}${m}${d}T${h}${min}${sec}`;
+        };
+
         let ics = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Dashboard//EN\n";
         events.forEach(e => {
-            const dt = e.date.replace(/-/g, "");
-            const t = (e.time || "09:00").replace(":", "") + "00";
-            const dur = e.duration || 60;
-            const em = parseInt(t.slice(0, 2)) * 60 + parseInt(t.slice(2, 4)) + dur;
-            ics += `BEGIN:VEVENT\nDTSTART:${dt}T${t}\nDTEND:${dt}T${String(Math.floor(em / 60)).padStart(2, "0")}${String(em % 60).padStart(2, "0")}00\nSUMMARY:${e.title}\nEND:VEVENT\n`;
+            const [year, month, day] = (e.date || toLocalDateStr(new Date())).split("-").map(Number);
+            const [hours, minutes] = (e.time || "09:00").split(":").map(Number);
+            const start = new Date(year, (month || 1) - 1, day || 1, hours || 0, minutes || 0, 0);
+            const end = new Date(start);
+            end.setMinutes(end.getMinutes() + (e.duration || 60));
+            ics += `BEGIN:VEVENT\nDTSTART:${formatICSDateTime(start)}\nDTEND:${formatICSDateTime(end)}\nSUMMARY:${e.title}\nEND:VEVENT\n`;
         });
         ics += "END:VCALENDAR";
         const a = document.createElement("a");
