@@ -48,32 +48,43 @@ function overlapsAt(x, y, w, h, thisId, registry) {
     return false;
 }
 
-function buildStops(min, max) {
-    const stops = [];
-    for (let value = min; value <= max; value += SNAP_GRID) stops.push(value);
-    if (!stops.length || stops[stops.length - 1] !== max) stops.push(max);
-    return stops;
-}
-
 function findOpenSlot(preferredX, preferredY, thisId, registry, metrics) {
     if (!registry?.current || !metrics.width || !metrics.height) return { x: preferredX, y: preferredY };
     if (!overlapsAt(preferredX, preferredY, metrics.width, metrics.height, thisId, registry)) return { x: preferredX, y: preferredY };
 
-    const candidates = [];
-    const xStops = buildStops(metrics.minX, metrics.maxX);
-    const yStops = buildStops(metrics.minY, metrics.maxY);
+    const seen = new Set();
+    const tryCandidate = (x, y) => {
+        const clampedX = clamp(x, metrics.minX, metrics.maxX);
+        const clampedY = clamp(y, metrics.minY, metrics.maxY);
+        const key = `${clampedX}:${clampedY}`;
+        if (seen.has(key)) return null;
+        seen.add(key);
+        if (!overlapsAt(clampedX, clampedY, metrics.width, metrics.height, thisId, registry)) {
+            return { x: clampedX, y: clampedY };
+        }
+        return null;
+    };
 
-    yStops.forEach(y => {
-        xStops.forEach(x => {
-            candidates.push({ x, y, dist: Math.abs(x - preferredX) + Math.abs(y - preferredY) });
-        });
-    });
+    const maxRadius = Math.max(
+        Math.abs(preferredX - metrics.minX),
+        Math.abs(metrics.maxX - preferredX),
+        Math.abs(preferredY - metrics.minY),
+        Math.abs(metrics.maxY - preferredY),
+    );
 
-    candidates.sort((a, b) => a.dist - b.dist);
+    for (let radius = SNAP_GRID; radius <= maxRadius + SNAP_GRID; radius += SNAP_GRID) {
+        for (let dx = -radius; dx <= radius; dx += SNAP_GRID) {
+            const topCandidate = tryCandidate(preferredX + dx, preferredY - radius);
+            if (topCandidate) return topCandidate;
+            const bottomCandidate = tryCandidate(preferredX + dx, preferredY + radius);
+            if (bottomCandidate) return bottomCandidate;
+        }
 
-    for (const candidate of candidates) {
-        if (!overlapsAt(candidate.x, candidate.y, metrics.width, metrics.height, thisId, registry)) {
-            return { x: candidate.x, y: candidate.y };
+        for (let dy = -radius + SNAP_GRID; dy <= radius - SNAP_GRID; dy += SNAP_GRID) {
+            const leftCandidate = tryCandidate(preferredX - radius, preferredY + dy);
+            if (leftCandidate) return leftCandidate;
+            const rightCandidate = tryCandidate(preferredX + radius, preferredY + dy);
+            if (rightCandidate) return rightCandidate;
         }
     }
 
@@ -158,6 +169,10 @@ export function useDraggable(ix, iy) {
             setPos(cur => cur.x === safePos.x && cur.y === safePos.y ? cur : safePos);
         });
         return () => window.cancelAnimationFrame(frame);
+    // pos is intentionally excluded: we only need to re-clamp when the
+    // viewport or header lock changes, and this effect captures the
+    // current position from that render before scheduling the rAF.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [minY, registry, bounds?.width, bounds?.height]);
 
     const onMouseDown = useCallback((e) => {
