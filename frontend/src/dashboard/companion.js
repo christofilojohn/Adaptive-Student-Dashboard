@@ -101,6 +101,9 @@ export function createInitialCompanionState() {
         wins: 0,
         focusMoments: 0,
         noteMoments: 0,
+        lastWinAt: 0,
+        lastFocusAt: 0,
+        lastNoteAt: 0,
         lastEvent: "welcome",
     };
 }
@@ -144,6 +147,7 @@ export function evolveCompanionState(prev, event) {
             break;
         case "task_completed":
             next.wins += 1;
+            next.lastWinAt = Date.now();
             next.sentiment = clamp(next.sentiment + 0.22, -1, 1);
             next.energy = clamp(next.energy + 0.12);
             next.warmth = clamp(next.warmth + 0.05);
@@ -153,11 +157,13 @@ export function evolveCompanionState(prev, event) {
             break;
         case "timer_started":
             next.focusMoments += 1;
+            next.lastFocusAt = Date.now();
             next.energy = clamp(next.energy + 0.08);
             next.trust = clamp(next.trust + 0.02);
             break;
         case "note_added":
             next.noteMoments += 1;
+            next.lastNoteAt = Date.now();
             next.warmth = clamp(next.warmth + 0.04);
             break;
         case "support_needed":
@@ -190,10 +196,13 @@ export function deriveCompanionView({
 }) {
     const idleMs = now - companion.lastInteractionAt;
     const pressure = activeTasks >= 5 || budgetProgress >= 80 || upcomingEvents >= 5;
-    const focused = timers > 0 || companion.focusMoments > 0;
-    const celebratory = companion.lastEvent === "task_completed" || completedTasks >= 3 || companion.wins >= 2;
+    const focusWindowMs = 30 * 60 * 1000;
+    const celebrateWindowMs = 10 * 60 * 1000;
+    const noteWindowMs = 20 * 60 * 1000;
+    const focused = timers > 0 || (companion.lastFocusAt && now - companion.lastFocusAt < focusWindowMs);
+    const celebratory = companion.lastEvent === "task_completed" || (companion.lastWinAt && now - companion.lastWinAt < celebrateWindowMs);
     const supportive = companion.sentiment < -0.2 || pressure;
-    const curious = companion.lastEvent === "note_added" || postits >= 3;
+    const curious = companion.lastEvent === "note_added" || (companion.lastNoteAt && now - companion.lastNoteAt < noteWindowMs) || postits >= 3;
 
     let mode = "planning";
     if (loading) mode = "thinking";

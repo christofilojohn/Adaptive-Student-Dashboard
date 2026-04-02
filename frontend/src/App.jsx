@@ -108,8 +108,7 @@ export default function App() {
     const setMoodWithCompanion = useCallback((mood, reason) => {
         if (!mood) return;
         setLennyMood(mood);
-        noteCompanion({ type: reason || "ambient_shift", mood });
-    }, [noteCompanion]);
+    }, []);
 
     const snap = () => ({
         tasks: tasks.slice(0, 10).map(t => t.text + (t.done ? " ✓" : "")),
@@ -195,7 +194,10 @@ export default function App() {
                 setBg(themes[a.theme].bg);
                 setAccent(themes[a.theme].accent);
                 const themeMood = inferMood(a.theme, []) || (a.theme === "minimal" ? "calm" : a.theme === "forest" ? "nature" : a.theme === "midnight" ? "mysterious" : null);
-                if (themeMood) setMoodWithCompanion(themeMood, "ambient_shift");
+                if (themeMood) {
+                    noteCompanion({ type: "ambient_shift", mood: themeMood });
+                    setMoodWithCompanion(themeMood, "ambient_shift");
+                }
             }
             else if (t === "set_greeting" && a.text) setGreeting(a.text);
             else if (t === "add_widget" && a.widgetType) setWidgets(p => [...p, { id: gid(), type: a.widgetType }]);
