@@ -413,21 +413,34 @@ async function directFetch(url) {
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
+const MAX_BODY_BYTES = 10 * 1024 * 1024;
+
 function readBody(req) {
     return new Promise((resolve, reject) => {
+        let settled = false;
+        const fail = (err) => {
+            if (settled) return;
+            settled = true;
+            reject(err);
+        };
         let raw = "";
         req.on("data", (chunk) => {
             raw += chunk;
-            if (raw.length > 10 * 1024 * 1024) req.destroy();
+            if (raw.length > MAX_BODY_BYTES) {
+                req.destroy();
+                fail(new Error("payload too large"));
+            }
         });
         req.on("end", () => {
+            if (settled) return;
+            settled = true;
             try {
                 resolve(JSON.parse(raw || "{}"));
             } catch {
                 reject(new Error("bad json"));
             }
         });
-        req.on("error", reject);
+        req.on("error", fail);
     });
 }
 
@@ -535,6 +548,10 @@ const server = createServer(async (req, res) => {
         }
         if (error.message === "bad json") {
             send(res, 400, { error: "Invalid JSON body" });
+            return;
+        }
+        if (error.message === "payload too large") {
+            send(res, 413, { error: "Payload too large" });
             return;
         }
 
