@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { DragBoundsCtx, HeaderLockCtx, WidgetRegistryCtx } from "./dashboard/drag";
-import { DEFAULT_AMBIENT, LLM_CONFIG, POSTIT_CHAR_LIMIT } from "./dashboard/constants";
+import { DEFAULT_AMBIENT, LLM_CONFIG, MODULE_COLORS, POSTIT_CHAR_LIMIT } from "./dashboard/constants";
 import { callAmbientLLM, callLLM } from "./dashboard/llm";
+import { createInitialCompanionState, deriveCompanionView, evolveCompanionState } from "./dashboard/companion";
 import { inferMood, toLocalDateStr } from "./dashboard/utils";
 import { BudgetPanel } from "./dashboard/components/budgetPanel";
 import { CalendarPanel } from "./dashboard/components/calendarPanel";
@@ -49,6 +50,13 @@ export default function App() {
     const [weeklyGoalTarget, setWeeklyGoalTarget] = useState(5);
     const [input, setInput] = useState(""), [loading, setLoading] = useState(false);
     const [lennyMood, setLennyMood] = useState("neutral");
+    const [companion, setCompanion] = useState(() => {
+        try {
+            return { ...createInitialCompanionState(), ...(JSON.parse(localStorage.getItem("lenny_companion") || "{}")) };
+        } catch {
+            return createInitialCompanionState();
+        }
+    });
     const [msgs, setMsgs] = useState([{ role: "assistant", text: `Ready! (${LLM_CONFIG.mode === "local" ? "local LLM" : "API"})\n\n• "make it cozy"\n• "check off documentation"\n• "meeting this friday 2pm"\n• "I spent €12 on lunch"\n• "focus mode"` }]);
 
     const scrollRef = useRef(null), inputRef = useRef(null), idRef = useRef(300), ambientTimerRef = useRef(null);
@@ -71,6 +79,12 @@ export default function App() {
         ro.observe(headerRef.current);
         return () => ro.disconnect();
     }, []);
+    useEffect(() => { localStorage.setItem("lenny_companion", JSON.stringify(companion)); }, [companion]);
+    const [companionNow, setCompanionNow] = useState(Date.now());
+    useEffect(() => {
+        const t = setInterval(() => setCompanionNow(Date.now()), 15000);
+        return () => clearInterval(t);
+    }, []);
     const gid = () => `i${idRef.current++}`;
     useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, loading]);
     useEffect(() => {
@@ -87,6 +101,16 @@ export default function App() {
         minimal: { bg: "#f5f0eb", accent: "#2d3436" },
     };
 
+    const noteCompanion = useCallback((event) => {
+        setCompanion(prev => evolveCompanionState(prev, event));
+    }, []);
+
+    const setMoodWithCompanion = useCallback((mood, reason) => {
+        if (!mood) return;
+        setLennyMood(mood);
+        noteCompanion({ type: reason || "ambient_shift", mood });
+    }, [noteCompanion]);
+
     const snap = () => ({
         tasks: tasks.slice(0, 10).map(t => t.text + (t.done ? " ✓" : "")),
         events: events.slice(0, 5).map(e => `${e.title} ${e.date}`),
@@ -101,7 +125,8 @@ export default function App() {
         if (!text.trim()) return;
         setTasks(p => [...p, { id: gid(), text: text.trim(), priority: "medium", done: false }]);
         const inferred = inferMood(text, [{ type: "add_task" }]);
-        if (inferred) setLennyMood(inferred);
+        if (inferred) setMoodWithCompanion(inferred, "task_added");
+        noteCompanion({ type: "task_added", userText: text, mood: inferred || companion.llmMood });
         callAmbientLLM(`User added task: "${text}". Emotional weight?`).then(r => {
             const safe = (r.actions || []).filter(a => a.type === "adjust_ambient");
             if (safe.length) exec(safe);
@@ -110,7 +135,8 @@ export default function App() {
     const manualAddEvent = (title, date, time, duration = 60, color) => {
         setEvents(p => [...p, { id: gid(), title, date, time, duration, color }]);
         const inferred = inferMood(title, [{ type: "add_event" }]);
-        if (inferred) setLennyMood(inferred);
+        if (inferred) setMoodWithCompanion(inferred, "planning");
+        noteCompanion({ type: "planning", userText: title, mood: inferred || companion.llmMood });
         callAmbientLLM(`User added event: "${title}" on ${date}. Emotional weight?`).then(r => {
             const safe = (r.actions || []).filter(a => a.type === "adjust_ambient");
             if (safe.length) exec(safe);
@@ -122,6 +148,7 @@ export default function App() {
     const manualAddExpense = (desc, amount, category, date) => {
         const expenseDate = date || toLocalDateStr(new Date());
         setExpenses(p => [...p, { id: gid(), description: desc, amount: parseFloat(amount), category, date: expenseDate }]);
+        noteCompanion({ type: "planning", userText: desc, mood: "productive" });
     };
 
     const exec = (actions) => {
@@ -129,9 +156,19 @@ export default function App() {
         for (const a of actions) {
             const t = a.type;
             if (t === "change_bg" && a.color) setBg(a.color);
-            else if (t === "add_postit") setPostits(p => [...p, { id: gid(), content: a.content || "Note", color: a.color || "#fef68a", x: Number(a.x) || 80 + Math.random() * 900, y: Number(a.y) || 40 + Math.random() * 800 }]);
-            else if (t === "add_task") setTasks(p => [...p, { id: gid(), text: a.text || "New task", priority: a.priority || "medium", done: false }]);
-            else if (t === "complete_task" && a.text) setTasks(p => p.map(tk => !tk.done && !tk.isParent && String(tk.text).toLowerCase().includes(String(a.text).toLowerCase()) ? { ...tk, done: true } : tk));
+            else if (t === "add_postit") {
+                setPostits(p => [...p, { id: gid(), content: a.content || "Note", color: a.color || "#fef68a", x: Number(a.x) || 80 + Math.random() * 900, y: Number(a.y) || 40 + Math.random() * 800 }]);
+                noteCompanion({ type: "note_added", userText: a.content || "Note", mood: "creative" });
+            }
+            else if (t === "add_task") {
+                setTasks(p => [...p, { id: gid(), text: a.text || "New task", priority: a.priority || "medium", done: false }]);
+                noteCompanion({ type: "task_added", userText: a.text || "New task", mood: "productive" });
+            }
+            else if (t === "complete_task" && a.text) {
+                setTasks(p => p.map(tk => !tk.done && !tk.isParent && String(tk.text).toLowerCase().includes(String(a.text).toLowerCase()) ? { ...tk, done: true } : tk));
+                noteCompanion({ type: "task_completed", userText: a.text, mood: "proud" });
+                setMoodWithCompanion("proud", "task_completed");
+            }
             else if (t === "delete_task" && a.text) setTasks(p => p.filter(tk => !String(tk.text).toLowerCase().includes(String(a.text).toLowerCase())));
             else if (t === "split_task" && a.text && Array.isArray(a.subtasks)) {
                 setTasks(p => {
@@ -144,26 +181,48 @@ export default function App() {
                     result.splice(pi + 1, 0, ...subs);
                     return result;
                 });
+                noteCompanion({ type: "planning", userText: a.text, mood: "productive" });
             }
-            else if (t === "add_timer") { const mins = Number(a.minutes); if (mins > 0) setTimers(p => [...p, { id: gid(), minutes: mins, label: a.label || "Timer" }]); else console.warn("[exec] add_timer skipped: invalid minutes:", a.minutes); }
-            else if (t === "change_theme" && themes[a.theme]) { setBg(themes[a.theme].bg); setAccent(themes[a.theme].accent); }
+            else if (t === "add_timer") {
+                const mins = Number(a.minutes);
+                if (mins > 0) {
+                    setTimers(p => [...p, { id: gid(), minutes: mins, label: a.label || "Timer" }]);
+                    noteCompanion({ type: "timer_started", userText: a.label || "Timer", mood: "focus" });
+                    setMoodWithCompanion("focus", "timer_started");
+                } else console.warn("[exec] add_timer skipped: invalid minutes:", a.minutes);
+            }
+            else if (t === "change_theme" && themes[a.theme]) {
+                setBg(themes[a.theme].bg);
+                setAccent(themes[a.theme].accent);
+                const themeMood = inferMood(a.theme, []) || (a.theme === "minimal" ? "calm" : a.theme === "forest" ? "nature" : a.theme === "midnight" ? "mysterious" : null);
+                if (themeMood) setMoodWithCompanion(themeMood, "ambient_shift");
+            }
             else if (t === "set_greeting" && a.text) setGreeting(a.text);
             else if (t === "add_widget" && a.widgetType) setWidgets(p => [...p, { id: gid(), type: a.widgetType }]);
-            else if (t === "add_event") setEvents(p => [...p, { id: gid(), title: a.title || "Event", date: a.date || toLocalDateStr(new Date()), time: a.time || "09:00", duration: Number(a.duration) || 60, color: a.color || "#6c5ce7" }]);
+            else if (t === "add_event") {
+                setEvents(p => [...p, { id: gid(), title: a.title || "Event", date: a.date || toLocalDateStr(new Date()), time: a.time || "09:00", duration: Number(a.duration) || 60, color: a.color || "#6c5ce7" }]);
+                noteCompanion({ type: "planning", userText: a.title || "Event", mood: "productive" });
+            }
             else if (t === "delete_event" && a.title) setEvents(p => p.filter(e => !String(e.title).toLowerCase().includes(String(a.title).toLowerCase())));
-            else if (t === "add_expense") setExpenses(p => [...p, { id: gid(), description: a.description || "Expense", amount: Number(a.amount) || 0, category: a.category || "other", date: a.date || toLocalDateStr(new Date()) }]);
-            else if (t === "add_note") setPostits(p => {
-                const pos = getNextPostitPosition(p.length);
-                return [
-                    ...p,
-                    {
-                        id: gid(),
-                        content: a.content || "Quick note",
-                        color: a.color || "#fef68a",
-                        ...pos
-                    }
-                ];
-            });
+            else if (t === "add_expense") {
+                setExpenses(p => [...p, { id: gid(), description: a.description || "Expense", amount: Number(a.amount) || 0, category: a.category || "other", date: a.date || toLocalDateStr(new Date()) }]);
+                noteCompanion({ type: "planning", userText: a.description || "Expense", mood: "productive" });
+            }
+            else if (t === "add_note") {
+                noteCompanion({ type: "note_added", userText: a.content || "Quick note", mood: "creative" });
+                setPostits(p => {
+                    const pos = getNextPostitPosition(p.length);
+                    return [
+                        ...p,
+                        {
+                            id: gid(),
+                            content: a.content || "Quick note",
+                            color: a.color || "#fef68a",
+                            ...pos
+                        }
+                    ];
+                });
+            }
             else if (t === "set_budget") setBudgetVal(Number(a.amount) || 0);
             else if (t === "adjust_ambient") {
                 setAmbient(prev => ({
@@ -173,8 +232,9 @@ export default function App() {
                     borderWarmth: a.borderWarmth != null ? Math.min(1, Math.max(0, Number(a.borderWarmth))) : prev.borderWarmth,
                     particles: a.particles || prev.particles, mood: a.mood || prev.mood,
                 }));
+                noteCompanion({ type: "ambient_shift", mood: a.mood || ambient.mood });
                 // Also try to sync lenny from LLM mood if it maps to something
-                if (a.mood) { const lm = inferMood(a.mood, []); if (lm) setLennyMood(lm); }
+                if (a.mood) { const lm = inferMood(a.mood, []); if (lm) setMoodWithCompanion(lm, "ambient_shift"); }
             }
             else if (t === "clear_canvas") { setPostits([]); setTimers([]); setWidgets([]); setSelectedPostitId(null); }
             else if (t === "add_module" && a.code) setModules(p => p.some(m => m.code === a.code) ? p : [...p, { id: gid(), code: a.code, name: a.name || a.code, credits: Number(a.credits) || 5, semester: a.semester || "michaelmas", moduleType: a.moduleType || "lecture", color: MODULE_COLORS[p.length % MODULE_COLORS.length] }]);
@@ -193,6 +253,7 @@ export default function App() {
         if (typeof ov !== "string") setInput("");
 
         setMsgs(m => [...m, { role: "user", text: txt }]);
+        noteCompanion({ type: "user_message", userText: txt, mood: inferMood(txt, []) || lennyMood });
         setLoading(true);
 
         try {
@@ -200,9 +261,13 @@ export default function App() {
             if (r.reply) {
                 exec(r.actions);
                 setMsgs(m => [...m, { role: "assistant", text: r.reply, ac: r.actions.length }]);
+                noteCompanion({ type: "assistant_reply", reply: r.reply, mood: inferMood(txt, r.actions) || ambient.mood });
                 // Client-side mood inference — no extra LLM call needed
                 const inferred = inferMood(txt, r.actions);
-                if (inferred) setLennyMood(inferred);
+                if (inferred) {
+                    setMoodWithCompanion(inferred, "assistant_reply");
+                    if (inferred === "stressed" || inferred === "sad") noteCompanion({ type: "support_needed", userText: txt, mood: inferred });
+                }
                 // Still fire ambient for visual effects (particles/glow) if no ambient action came back
                 const hasAmbient = r.actions.some(a => a.type === "adjust_ambient");
                 if (!hasAmbient) {
@@ -288,6 +353,19 @@ export default function App() {
     };
 
     const adaptiveStatus = adaptiveStatusMap[ambient.mood] || "Planning mode active";
+    const companionView = useMemo(() => deriveCompanionView({
+        companion,
+        baseMood: lennyMood,
+        ambientMood: ambient.mood,
+        activeTasks,
+        completedTasks,
+        timers: timers.length,
+        postits: postits.length,
+        upcomingEvents,
+        budgetProgress,
+        loading,
+        now: companionNow,
+    }), [activeTasks, ambient.mood, budgetProgress, companion, companionNow, completedTasks, lennyMood, loading, postits.length, timers.length, upcomingEvents]);
 
     const noteColors = ["#fef68a", "#ffd6a5", "#caffbf", "#bde0fe", "#e9d5ff"];
     const getNextPostitPosition = (count) => ({
@@ -311,8 +389,21 @@ export default function App() {
 
         setShowPostitLibrary(true);
         setSelectedPostitId(id);
+        noteCompanion({ type: "note_added", userText: "New sticky note", mood: "creative" });
     };
     const updatePostit = (id, updates) => setPostits(pp => pp.map(n => n.id === id ? { ...n, ...updates } : n));
+    const updatePostitContent = (id, value) => {
+        updatePostit(id, { content: value });
+        noteCompanion({ type: "note_added", userText: value, mood: "creative" });
+    };
+    const toggleTask = (id) => {
+        const target = tasks.find(tk => tk.id === id);
+        if (!target) return;
+        const nextDone = !target.done;
+        noteCompanion({ type: nextDone ? "task_completed" : "planning", userText: target.text, mood: nextDone ? "proud" : "productive" });
+        if (nextDone) setMoodWithCompanion("proud", "task_completed");
+        setTasks(t => t.map(tk => tk.id === id ? { ...tk, done: nextDone } : tk));
+    };
     const deletePostit = (id) => {
         setPostits(pp => pp.filter(n => n.id !== id));
         setSelectedPostitId(cur => cur === id ? null : cur);
@@ -332,6 +423,7 @@ export default function App() {
             @keyframes itemIn{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:translateX(0)}}
             @keyframes lennyBreathe{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
             @keyframes lennyThink{0%,100%{transform:translateY(0) rotate(0deg)}25%{transform:translateY(-2px) rotate(-3deg)}75%{transform:translateY(-1px) rotate(3deg)}}
+            @keyframes lennyFloat{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-6px) scale(1.02)}}
             .anim-item { animation: itemIn 0.25s ease-out; }
             .anim-panel { animation: panelIn 0.2s ease-out; }
             .panel-shell:hover { transform: translateY(-2px); box-shadow: 0 14px 36px rgba(0,0,0,0.22), 0 0 24px rgba(255,255,255,0.04) !important; }
@@ -345,7 +437,7 @@ export default function App() {
                 <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 2, opacity: ambient.grainOpacity, backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E")`, backgroundRepeat: "repeat", backgroundSize: "128px", transition: "opacity 2s" }} />
 
                 {ambient.particles !== "none" && <Particles type={ambient.particles} color={ambient.glowColor !== "transparent" ? ambient.glowColor : accent} />}
-                <LennyBuddy mood={lennyMood} glowColor={ambient.glowColor !== "transparent" ? ambient.glowColor : accent} light={light} loading={loading} />
+                <LennyBuddy mood={companionView.mood} glowColor={ambient.glowColor !== "transparent" ? ambient.glowColor : accent} light={light} loading={loading} companion={companionView} />
 
                 {/* Header */}
                 <div ref={headerRef} style={{ position: "relative", zIndex: 50, padding: "14px 24px 8px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14 }}>
@@ -424,7 +516,7 @@ export default function App() {
                 </div>
 
                 <HeaderLockCtx.Provider value={headerLockY}>
-                {showTasks && <TasksPanel tasks={tasks} onToggle={id => setTasks(t => t.map(tk => tk.id === id ? { ...tk, done: !tk.done } : tk))} onEditTask={(id, v) => setTasks(t => t.map(tk => tk.id === id ? { ...tk, text: v } : tk))} onRequestSplit={t => send(`split the task "${t}" into subtasks`)} onAddTask={manualAddTask} accent={accent} light={light} onClose={() => setShowTasks(false)} ambient={ambient} />}
+                {showTasks && <TasksPanel tasks={tasks} onToggle={toggleTask} onEditTask={(id, v) => setTasks(t => t.map(tk => tk.id === id ? { ...tk, text: v } : tk))} onRequestSplit={t => send(`split the task "${t}" into subtasks`)} onAddTask={manualAddTask} accent={accent} light={light} onClose={() => setShowTasks(false)} ambient={ambient} />}
                 {showCal && <CalendarPanel events={events} onDeleteEvent={id => setEvents(e => e.filter(ev => ev.id !== id))} onAddEvent={manualAddEvent} onEditEvent={manualEditEvent} accent={accent} light={light} onClose={() => setShowCal(false)} ambient={ambient} />}
                 {showBudget && <BudgetPanel expenses={expenses} budget={budget} accent={accent} light={light} onClose={() => setShowBudget(false)} onDeleteExpense={id => setExpenses(e => e.filter(ex => ex.id !== id))} onAddExpense={manualAddExpense} ambient={ambient} />}
                 {showRewards && <RewardsPanel weeklyGoalCategory={weeklyGoalCategory} setWeeklyGoalCategory={setWeeklyGoalCategory} weeklyGoalTarget={weeklyGoalTarget} setWeeklyGoalTarget={setWeeklyGoalTarget} weeklyGoalProgress={weeklyGoalProgress} weeklyGoalLabel={activeWeeklyGoal.label} weeklyGoalHelper={weeklyGoalHelper} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" />}
@@ -475,14 +567,14 @@ export default function App() {
                                 </div>
                                 <div style={{ flex: 1, borderRadius: 24, background: selectedPostit.color || "#fef68a", padding: 22, boxShadow: "0 18px 50px rgba(0,0,0,0.18)", display: "flex", flexDirection: "column" }}>
                                     <div style={{ fontSize: 12, color: "rgba(45,52,54,0.55)", fontFamily: "'JetBrains Mono'", letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 12 }}>Sticky note</div>
-                                    <EditableText value={selectedPostit.content} onChange={v => updatePostit(selectedPostit.id, { content: v })} maxLen={POSTIT_CHAR_LIMIT} multiline style={{ fontFamily: "'Caveat', cursive", fontSize: 28, lineHeight: 1.25, color: "#111111", flex: 1 }} />
+                                    <EditableText value={selectedPostit.content} onChange={v => updatePostitContent(selectedPostit.id, v)} maxLen={POSTIT_CHAR_LIMIT} multiline style={{ fontFamily: "'Caveat', cursive", fontSize: 28, lineHeight: 1.25, color: "#111111", flex: 1 }} />
                                 </div>
                             </> : <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: txm, fontSize: 12 }}>Select a sticky note or click + to create one.</div>}
                         </div>
                     </div>
                 </div>}
 
-                {postits.map(p => <PostIt key={p.id} id={p.id} content={p.content} color={p.color} initialX={p.x} initialY={p.y} onRemove={id => setPostits(pp => pp.filter(n => n.id !== id))} onEdit={(id, v) => setPostits(pp => pp.map(n => n.id === id ? { ...n, content: v } : n))} />)}
+                {postits.map(p => <PostIt key={p.id} id={p.id} content={p.content} color={p.color} initialX={p.x} initialY={p.y} onRemove={id => setPostits(pp => pp.filter(n => n.id !== id))} onEdit={updatePostitContent} />)}
                 {timers.map(t => <TimerWidget key={t.id} id={t.id} minutes={t.minutes} label={t.label} onRemove={id => setTimers(tt => tt.filter(n => n.id !== id))} light={light} />)}
                 {widgets.map(w => w.type === "clock" ? <ClockWidget key={w.id} id={w.id} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} light={light} /> : w.type === "quote" ? <QuoteWidget key={w.id} id={w.id} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} light={light} /> : null)}
 
