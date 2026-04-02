@@ -111,7 +111,7 @@ export function Particles({ type, color }) {
     );
 }
 
-export function LennyBuddy({ mood, glowColor, light, loading }) {
+export function LennyBuddy({ mood, glowColor, light, loading, companion }) {
     const [transitioning, setTransitioning] = useState(false);
     const [blink, setBlink] = useState(false);
     const entry = getLennyByMood(mood);
@@ -137,16 +137,57 @@ export function LennyBuddy({ mood, glowColor, light, loading }) {
 
     const txc = light ? "rgba(45,52,54,0.7)" : "rgba(255,255,255,0.7)";
     const subtleColor = (glowColor && glowColor !== "transparent") ? glowColor : txc;
+    const auraColor = companion?.theme?.aura || subtleColor;
+    const accentColor = companion?.theme?.accent || subtleColor;
+    const hazeColor = companion?.theme?.haze || `${subtleColor}18`;
+    const shellBg = light ? "rgba(255,255,255,0.78)" : "rgba(11,16,28,0.68)";
+    const shellBorder = light ? "rgba(45,52,54,0.1)" : "rgba(255,255,255,0.1)";
+    const messageBg = light ? "rgba(255,255,255,0.74)" : "rgba(7,10,20,0.82)";
+    const copyColor = light ? "rgba(45,52,54,0.8)" : "rgba(255,255,255,0.82)";
+    const metaColor = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
+    const auraBlur = 36 + (companion?.sparkle || 0.4) * 40;
+    const bob = loading ? "lennyThink 0.65s ease-in-out infinite" : "lennyFloat 5s ease-in-out infinite";
+    const ringScale = 1 + (companion?.presence || 0.5) * 0.08;
 
     return (
-        <div style={{ position: "absolute", bottom: 10, left: 20, zIndex: 50, display: "flex", alignItems: "center", gap: 8, userSelect: "none", pointerEvents: "none" }}>
-            <div style={{ position: "relative", animation: loading ? "lennyThink 0.6s ease-in-out infinite" : "lennyBreathe 4s ease-in-out infinite", filter: `drop-shadow(0 0 ${mood !== "neutral" ? "8px" : "3px"} ${subtleColor}44)`, transition: "filter 2s ease" }}>
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 16, color: subtleColor, opacity: blink ? 0.3 : 0.8, transition: "opacity 0.1s, color 2s", whiteSpace: "nowrap", transform: transitioning ? "scale(0.85)" : "scale(1)", transitionProperty: "transform, opacity, color", transitionDuration: "0.3s, 0.1s, 2s" }}>
-                    {entry.face}
+        <div style={{ position: "absolute", bottom: 18, left: 18, zIndex: 60, display: "flex", alignItems: "flex-end", gap: 14, userSelect: "none", pointerEvents: "none", width: "min(500px, 44vw)", maxWidth: "calc(100vw - 36px)" }}>
+            <div style={{ position: "relative", minWidth: 158, padding: "18px 18px 16px", borderRadius: 28, background: `linear-gradient(145deg, ${shellBg}, ${hazeColor})`, border: `1px solid ${shellBorder}`, boxShadow: `0 20px 48px rgba(0,0,0,0.24), 0 0 0 1px ${accentColor}14, inset 0 1px 0 rgba(255,255,255,0.08)`, overflow: "hidden", backdropFilter: "blur(20px)" }}>
+                <div style={{ position: "absolute", inset: "auto auto -22px -12px", width: 116, height: 116, borderRadius: "50%", background: auraColor, opacity: 0.14 + (companion?.sparkle || 0.3) * 0.22, filter: `blur(${auraBlur}px)` }} />
+                <div style={{ position: "absolute", inset: 12, borderRadius: 20, border: `1px solid ${accentColor}22`, opacity: 0.9 }} />
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12, position: "relative" }}>
+                    <div>
+                        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: 1.8, textTransform: "uppercase", color: metaColor }}>
+                            {companion?.title || "Study companion"}
+                        </div>
+                        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, letterSpacing: 1.2, color: accentColor, marginTop: 4 }}>
+                            {loading ? "processing" : companion?.status || entry.label}
+                        </div>
+                    </div>
+                    <div style={{ width: 42, height: 42, borderRadius: "50%", border: `1px solid ${accentColor}33`, background: `${accentColor}16`, display: "grid", placeItems: "center", transform: `scale(${ringScale})`, transition: "transform 0.5s ease" }}>
+                        <div style={{ width: 22, height: 22, borderRadius: "50%", background: auraColor, opacity: 0.85, filter: "blur(0.5px)", boxShadow: `0 0 18px ${auraColor}66` }} />
+                    </div>
+                </div>
+                <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", minHeight: 116, animation: bob, filter: `drop-shadow(0 0 ${mood !== "neutral" ? "20px" : "8px"} ${auraColor}55)`, transition: "filter 2s ease" }}>
+                    <div style={{ position: "absolute", width: 104, height: 104, borderRadius: "50%", border: `1px solid ${accentColor}22`, transform: `scale(${0.94 + (companion?.comfort || 0.4) * 0.12})` }} />
+                    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "clamp(2.2rem, 4vw, 3.3rem)", lineHeight: 1, color: auraColor, opacity: blink ? 0.22 : 0.96, transition: "opacity 0.1s, color 2s", whiteSpace: "nowrap", transform: transitioning ? "scale(0.86)" : "scale(1)", transitionProperty: "transform, opacity, color", transitionDuration: "0.3s, 0.1s, 2s" }}>
+                        {entry.face}
+                    </div>
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12, position: "relative" }}>
+                    {(companion?.metrics || [entry.label]).map((metric) => (
+                        <span key={metric} style={{ padding: "5px 8px", borderRadius: 999, background: light ? "rgba(45,52,54,0.05)" : "rgba(255,255,255,0.06)", border: `1px solid ${accentColor}18`, color: metaColor, fontFamily: "'JetBrains Mono', monospace", fontSize: 8.5, letterSpacing: 0.5 }}>
+                            {metric}
+                        </span>
+                    ))}
                 </div>
             </div>
-            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, letterSpacing: 2, textTransform: "uppercase", color: subtleColor, opacity: 0.45, transition: "color 2s, opacity 0.5s" }}>
-                {loading ? "thinking..." : entry.label}
+            <div style={{ maxWidth: 270, padding: "14px 16px", borderRadius: 22, background: messageBg, border: `1px solid ${shellBorder}`, boxShadow: "0 16px 40px rgba(0,0,0,0.18)", backdropFilter: "blur(20px)", marginBottom: 8 }}>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8.5, letterSpacing: 1.6, textTransform: "uppercase", color: accentColor, marginBottom: 8 }}>
+                    {loading ? "thinking..." : entry.label}
+                </div>
+                <div style={{ fontSize: 13, lineHeight: 1.5, color: copyColor }}>
+                    {companion?.message || "I am here to keep the dashboard feeling calm and responsive."}
+                </div>
             </div>
         </div>
     );
