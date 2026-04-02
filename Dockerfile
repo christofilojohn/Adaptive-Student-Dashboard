@@ -114,6 +114,12 @@ proxy_set_header Host $host;
 proxy_read_timeout 30s;
 }
 
+location /api/ {
+proxy_pass http://127.0.0.1:8082;
+proxy_set_header Host $host;
+proxy_read_timeout 30s;
+}
+
 location /health {
 proxy_pass http://127.0.0.1:8080/health;
 }
@@ -137,6 +143,7 @@ ENV MODEL_PATH=/models/Phi-3.5-mini-instruct-Q4_K_M.gguf
 ENV LLM_CONTEXT=4096
 ENV LLM_THREADS=4
 ENV LLM_NGL=999
+ENV DASHBOARD_DATA_DIR=/var/lib/adaptive-dashboard
 
 # Run as non-root. Port 3000 > 1024 so no capability needed.
 # Replace the default 'user www-data;' directive — nginx cannot setuid() when
@@ -144,8 +151,8 @@ ENV LLM_NGL=999
 # Pre-create the nginx pid file so the dashboard user can write to it.
 RUN useradd --system --no-create-home --shell /sbin/nologin dashboard \
     && sed -i 's/^user www-data;/user dashboard;/' /etc/nginx/nginx.conf \
-    && mkdir -p /var/lib/nginx/body /var/lib/nginx/proxy \
-    && chown -R dashboard:dashboard /var/www/dashboard /var/log /var/lib/nginx \
+    && mkdir -p /var/lib/nginx/body /var/lib/nginx/proxy /var/lib/adaptive-dashboard \
+    && chown -R dashboard:dashboard /var/www/dashboard /var/log /var/lib/nginx /var/lib/adaptive-dashboard \
     && touch /run/nginx.pid && chown dashboard:dashboard /run/nginx.pid
 USER dashboard
 

@@ -2,8 +2,10 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { DragBoundsCtx, HeaderLockCtx, WidgetRegistryCtx } from "./dashboard/drag";
 import { DEFAULT_AMBIENT, LLM_CONFIG, MODULE_COLORS, POSTIT_CHAR_LIMIT } from "./dashboard/constants";
 import { callAmbientLLM, callLLM } from "./dashboard/llm";
-import { createInitialCompanionState, deriveCompanionView, evolveCompanionState } from "./dashboard/companion";
+import { deriveCompanionView, evolveCompanionState } from "./dashboard/companion";
 import { inferMood, toLocalDateStr } from "./dashboard/utils";
+import { clearProfile, clearStoredSessionToken, fetchProfiles, loginProfile, logoutProfile, restoreSession, saveProfileState } from "./dashboard/profileApi";
+import { createDefaultDashboardState, getNextGeneratedIdStart, normalizeDashboardState } from "./dashboard/profileState";
 import { BudgetPanel } from "./dashboard/components/budgetPanel";
 import { CalendarPanel } from "./dashboard/components/calendarPanel";
 import { PostIt, TimerWidget, ClockWidget, QuoteWidget } from "./dashboard/components/floatingWidgets";
@@ -14,50 +16,36 @@ import { TCDModulesPanel } from "./dashboard/components/tcdModulesPanel";
 import { TimetablePanel } from "./dashboard/components/timetablePanel";
 import { WeatherWidget } from "./dashboard/components/weatherWidget";
 export default function App() {
-    const [bg, setBg] = useState("linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)");
-    const [greeting, setGreeting] = useState("Plan your week, not just your tasks.");
-    const [accent, setAccent] = useState("#00cec9");
-    const [ambient, setAmbient] = useState({ ...DEFAULT_AMBIENT });
-    const [showTasks, setShowTasks] = useState(true), [showCal, setShowCal] = useState(true), [showBudget, setShowBudget] = useState(true), [showRewards, setShowRewards] = useState(true), [showWeather, setShowWeather] = useState(true);
-    const [showTCDModules, setShowTCDModules] = useState(false), [showTimetable, setShowTimetable] = useState(false);
-    // TCD state — persisted to localStorage
-    const [modules, setModules] = useState(() => { try { return JSON.parse(localStorage.getItem("tcd_modules") || "[]"); } catch { return []; } });
-    const [timetable, setTimetable] = useState(() => { try { return JSON.parse(localStorage.getItem("tcd_timetable") || "[]"); } catch { return []; } });
-    const [tcdDegree, setTcdDegree] = useState(() => { try { return JSON.parse(localStorage.getItem("tcd_degree") || "null"); } catch { return null; } });
-    useEffect(() => { localStorage.setItem("tcd_modules", JSON.stringify(modules)); }, [modules]);
-    useEffect(() => { localStorage.setItem("tcd_timetable", JSON.stringify(timetable)); }, [timetable]);
-    useEffect(() => { localStorage.setItem("tcd_degree", JSON.stringify(tcdDegree)); }, [tcdDegree]);
-    const [postits, setPostits] = useState([]);
+    const initialState = useMemo(() => createDefaultDashboardState(), []);
+    const [bg, setBg] = useState(initialState.bg);
+    const [greeting, setGreeting] = useState(initialState.greeting);
+    const [accent, setAccent] = useState(initialState.accent);
+    const [ambient, setAmbient] = useState(initialState.ambient);
+    const [showTasks, setShowTasks] = useState(initialState.showTasks), [showCal, setShowCal] = useState(initialState.showCal), [showBudget, setShowBudget] = useState(initialState.showBudget), [showRewards, setShowRewards] = useState(initialState.showRewards), [showWeather, setShowWeather] = useState(initialState.showWeather);
+    const [showTCDModules, setShowTCDModules] = useState(initialState.showTCDModules), [showTimetable, setShowTimetable] = useState(initialState.showTimetable);
+    const [modules, setModules] = useState(initialState.modules);
+    const [timetable, setTimetable] = useState(initialState.timetable);
+    const [tcdDegree, setTcdDegree] = useState(initialState.tcdDegree);
+    const [postits, setPostits] = useState(initialState.postits);
     const [showPostitLibrary, setShowPostitLibrary] = useState(false);
     const [selectedPostitId, setSelectedPostitId] = useState(null);
-    const [tasks, setTasks] = useState([
-        { id: "t1", text: "Finish adaptive apps UI polish 🎨", priority: "high", done: false },
-        { id: "t2", text: "Review CS deadline list 📚", priority: "medium", done: false },
-        { id: "t3", text: "Plan study blocks for the week 🗓️", priority: "low", done: false },
-    ]);
-    const [timers, setTimers] = useState([]), [widgets, setWidgets] = useState([]);
-    const [events, setEvents] = useState([
-        { id: "e1", title: "Lecture block 📚", date: toLocalDateStr(new Date()), time: "10:00", duration: 60, color: "#6c5ce7" },
-        { id: "e2", title: "Team checkpoint 👥", date: (() => { const d = new Date(); d.setDate(d.getDate() + 1); return toLocalDateStr(d); })(), time: "15:00", duration: 45, color: "#00cec9" },
-    ]);
-    const [expenses, setExpenses] = useState([
-        { id: "x1", description: "Coffee ☕", amount: 4.50, category: "food", date: toLocalDateStr(new Date()) },
-        { id: "x2", description: "Bus fare 🚍", amount: 20, category: "transport", date: (() => { const d = new Date(); d.setDate(d.getDate() - 1); return toLocalDateStr(d); })() },
-        { id: "x3", description: "Library lunch 🥪", amount: 8.90, category: "food", date: (() => { const d = new Date(); d.setDate(d.getDate() - 2); return toLocalDateStr(d); })() }
-    ]);
-    const [budget, setBudgetVal] = useState(500);
-    const [weeklyGoalCategory, setWeeklyGoalCategory] = useState("tasks");
-    const [weeklyGoalTarget, setWeeklyGoalTarget] = useState(5);
+    const [tasks, setTasks] = useState(initialState.tasks);
+    const [timers, setTimers] = useState(initialState.timers), [widgets, setWidgets] = useState(initialState.widgets);
+    const [events, setEvents] = useState(initialState.events);
+    const [expenses, setExpenses] = useState(initialState.expenses);
+    const [budget, setBudgetVal] = useState(initialState.budget);
+    const [weeklyGoalCategory, setWeeklyGoalCategory] = useState(initialState.weeklyGoalCategory);
+    const [weeklyGoalTarget, setWeeklyGoalTarget] = useState(initialState.weeklyGoalTarget);
     const [input, setInput] = useState(""), [loading, setLoading] = useState(false);
-    const [lennyMood, setLennyMood] = useState("neutral");
-    const [companion, setCompanion] = useState(() => {
-        try {
-            return { ...createInitialCompanionState(), ...(JSON.parse(localStorage.getItem("lenny_companion") || "{}")) };
-        } catch {
-            return createInitialCompanionState();
-        }
-    });
-    const [msgs, setMsgs] = useState([{ role: "assistant", text: `Ready! (${LLM_CONFIG.mode === "local" ? "local LLM" : "API"})\n\n• "make it cozy"\n• "check off documentation"\n• "meeting this friday 2pm"\n• "I spent €12 on lunch"\n• "focus mode"` }]);
+    const [lennyMood, setLennyMood] = useState(initialState.lennyMood);
+    const [companion, setCompanion] = useState(initialState.companion);
+    const [msgs, setMsgs] = useState(initialState.msgs);
+    const [session, setSession] = useState(null);
+    const [profileMeta, setProfileMeta] = useState(null);
+    const [profileOptions, setProfileOptions] = useState([]);
+    const [profileStatus, setProfileStatus] = useState("booting");
+    const [authMessage, setAuthMessage] = useState("");
+    const [profileNameInput, setProfileNameInput] = useState("");
 
     const scrollRef = useRef(null), inputRef = useRef(null), idRef = useRef(300), ambientTimerRef = useRef(null);
     const widgetRegistry = useRef(new Map());
@@ -79,7 +67,6 @@ export default function App() {
         ro.observe(headerRef.current);
         return () => ro.disconnect();
     }, []);
-    useEffect(() => { localStorage.setItem("lenny_companion", JSON.stringify(companion)); }, [companion]);
     const [companionNow, setCompanionNow] = useState(Date.now());
     useEffect(() => {
         const t = setInterval(() => setCompanionNow(Date.now()), 15000);
@@ -91,6 +78,143 @@ export default function App() {
         if (showPostitLibrary && !selectedPostitId && postits.length) setSelectedPostitId(postits[0].id);
         if (!postits.length && selectedPostitId) setSelectedPostitId(null);
     }, [showPostitLibrary, postits, selectedPostitId]);
+
+    const applyProfileState = useCallback((rawState) => {
+        const next = normalizeDashboardState(rawState);
+
+        setBg(next.bg);
+        setGreeting(next.greeting);
+        setAccent(next.accent);
+        setAmbient(next.ambient);
+        setShowTasks(next.showTasks);
+        setShowCal(next.showCal);
+        setShowBudget(next.showBudget);
+        setShowRewards(next.showRewards);
+        setShowWeather(next.showWeather);
+        setShowTCDModules(next.showTCDModules);
+        setShowTimetable(next.showTimetable);
+        setModules(next.modules);
+        setTimetable(next.timetable);
+        setTcdDegree(next.tcdDegree);
+        setPostits(next.postits);
+        setShowPostitLibrary(false);
+        setSelectedPostitId(null);
+        setTasks(next.tasks);
+        setTimers(next.timers);
+        setWidgets(next.widgets);
+        setEvents(next.events);
+        setExpenses(next.expenses);
+        setBudgetVal(next.budget);
+        setWeeklyGoalCategory(next.weeklyGoalCategory);
+        setWeeklyGoalTarget(next.weeklyGoalTarget);
+        setInput("");
+        setLoading(false);
+        setLennyMood(next.lennyMood);
+        setCompanion(next.companion);
+        setMsgs(next.msgs);
+        idRef.current = getNextGeneratedIdStart(next);
+    }, []);
+
+    const buildProfileState = useCallback(() => ({
+        bg,
+        greeting,
+        accent,
+        ambient,
+        showTasks,
+        showCal,
+        showBudget,
+        showRewards,
+        showWeather,
+        showTCDModules,
+        showTimetable,
+        modules,
+        timetable,
+        tcdDegree,
+        postits,
+        tasks,
+        timers,
+        widgets,
+        events,
+        expenses,
+        budget,
+        weeklyGoalCategory,
+        weeklyGoalTarget,
+        lennyMood,
+        companion,
+        msgs,
+    }), [accent, ambient, bg, budget, companion, events, expenses, greeting, lennyMood, modules, msgs, postits, showBudget, showCal, showRewards, showTCDModules, showTasks, showTimetable, showWeather, tasks, tcdDegree, timetable, timers, weeklyGoalCategory, weeklyGoalTarget, widgets]);
+
+    const loadProfileDirectory = useCallback(async () => {
+        try {
+            const data = await fetchProfiles();
+            setProfileOptions(data.profiles || []);
+        } catch (error) {
+            console.warn("[profiles] failed to load directory", error);
+        }
+    }, []);
+
+    const resetProfileShell = useCallback((message = "") => {
+        clearStoredSessionToken();
+        applyProfileState(createDefaultDashboardState());
+        setSession(null);
+        setProfileMeta(null);
+        setProfileStatus("logged_out");
+        setProfileNameInput("");
+        setAuthMessage(message);
+    }, [applyProfileState]);
+
+    useEffect(() => {
+        loadProfileDirectory();
+    }, [loadProfileDirectory]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        (async () => {
+            try {
+                const payload = await restoreSession();
+                if (cancelled) return;
+
+                if (!payload) {
+                    setProfileStatus("logged_out");
+                    return;
+                }
+
+                applyProfileState(payload.state);
+                setSession(payload.session);
+                setProfileMeta(payload.profile);
+                setProfileNameInput(payload.profile.displayName);
+                setProfileStatus("ready");
+                setAuthMessage("");
+            } catch {
+                if (!cancelled) resetProfileShell("Saved session expired. Sign in again.");
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [applyProfileState, resetProfileShell]);
+
+    useEffect(() => {
+        if (profileStatus !== "ready" || !session) return;
+
+        const timer = setTimeout(async () => {
+            try {
+                const payload = await saveProfileState(buildProfileState(), session.token);
+                setProfileMeta(payload.profile);
+                setAuthMessage(current => current.startsWith("Profile sync failed") ? "" : current);
+            } catch (error) {
+                if (/unauthorized/i.test(error.message)) {
+                    resetProfileShell("Session expired. Sign in again.");
+                    return;
+                }
+                setAuthMessage(`Profile sync failed: ${error.message}`);
+            }
+        }, 350);
+
+        return () => clearTimeout(timer);
+    }, [buildProfileState, profileStatus, resetProfileShell, session]);
 
     const themes = {
         cozy: { bg: "linear-gradient(135deg, #2d1b14 0%, #1a1410 50%, #0d0a07 100%)", accent: "#e17055" },
@@ -339,6 +463,7 @@ export default function App() {
         { key: "ocean", label: "Fresh start" },
         { key: "minimal", label: "Minimal" },
     ];
+    const profileUpdatedLabel = profileMeta?.updatedAt ? new Date(profileMeta.updatedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "Saving...";
 
     const safeAmbientGlowColor = (ambient.glowColor && ambient.glowColor !== "transparent") ? ambient.glowColor : "#ffffff";
     const ambientBg = ambient.glowIntensity > 0 ? `radial-gradient(ellipse at 30% 40%, ${safeAmbientGlowColor}${Math.round(ambient.glowIntensity * 255).toString(16).padStart(2, "0")} 0%, transparent 70%)` : "none";
@@ -407,6 +532,98 @@ export default function App() {
         setPostits(pp => pp.filter(n => n.id !== id));
         setSelectedPostitId(cur => cur === id ? null : cur);
     };
+
+    const handleLogin = async (nameOverride) => {
+        const nextName = String(nameOverride ?? profileNameInput).trim();
+        if (!nextName) {
+            setAuthMessage("Enter a profile name first.");
+            return;
+        }
+
+        setProfileStatus("booting");
+        try {
+            const payload = await loginProfile(nextName);
+            applyProfileState(payload.state);
+            setSession(payload.session);
+            setProfileMeta(payload.profile);
+            setProfileNameInput(payload.profile.displayName);
+            setProfileStatus("ready");
+            setAuthMessage("");
+            await loadProfileDirectory();
+        } catch (error) {
+            setProfileStatus("logged_out");
+            setAuthMessage(error.message);
+        }
+    };
+
+    const handleLogout = async () => {
+        try {
+            await logoutProfile(session?.token);
+        } catch (error) {
+            console.warn("[profiles] logout failed", error);
+        }
+        resetProfileShell("");
+        loadProfileDirectory();
+    };
+
+    const handleClearProfile = async () => {
+        if (!session || !window.confirm(`Clear the profile "${profileMeta?.displayName || "this profile"}"? This removes its saved dashboard data.`)) return;
+
+        try {
+            await clearProfile(session.token);
+            resetProfileShell("Profile cleared.");
+            loadProfileDirectory();
+        } catch (error) {
+            setAuthMessage(`Couldn't clear profile: ${error.message}`);
+        }
+    };
+
+    const authBusy = profileStatus === "booting";
+    const visibleProfiles = profileOptions.slice(0, 6);
+
+    if (profileStatus !== "ready" || !session) {
+        return <>
+            <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,700;1,400&family=JetBrains+Mono:wght@200;400;600;700&display=swap" rel="stylesheet" />
+            <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24, background: bg, color: tx, fontFamily: "'DM Sans', sans-serif" }}>
+                <div style={{ width: "min(520px, 100%)", padding: 28, borderRadius: 28, background: light ? "rgba(255,255,255,0.82)" : "rgba(8,10,20,0.72)", border: `1px solid ${pBd}`, boxShadow: "0 24px 80px rgba(0,0,0,0.28)", backdropFilter: "blur(18px)" }}>
+                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 10, letterSpacing: 1.8, textTransform: "uppercase", color: accent }}>Adaptive Dashboard</div>
+                    <h1 style={{ margin: "10px 0 8px", fontSize: 30, fontWeight: 500, lineHeight: 1.05 }}>Sign in with a profile name</h1>
+                    <div style={{ fontSize: 13, lineHeight: 1.6, color: light ? "rgba(45,52,54,0.7)" : "rgba(255,255,255,0.68)" }}>
+                        Keep things simple for now: type a name to create or reopen a profile. No password yet, but each profile keeps its own saved dashboard state.
+                    </div>
+
+                    <form onSubmit={e => { e.preventDefault(); handleLogin(); }} style={{ display: "grid", gap: 12, marginTop: 22 }}>
+                        <input
+                            value={profileNameInput}
+                            onChange={e => {
+                                setProfileNameInput(e.target.value);
+                                if (authMessage) setAuthMessage("");
+                            }}
+                            placeholder="e.g. Chris"
+                            disabled={authBusy}
+                            style={{ width: "100%", padding: "14px 16px", borderRadius: 16, border: `1px solid ${pBd}`, background: light ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.05)", color: tx, outline: "none", fontSize: 15 }}
+                        />
+                        <button type="submit" disabled={authBusy} style={{ padding: "13px 16px", borderRadius: 16, border: "none", background: `linear-gradient(135deg, ${accent}, ${accent}aa)`, color: "#fff", fontSize: 14, fontWeight: 600, cursor: authBusy ? "wait" : "pointer", opacity: authBusy ? 0.7 : 1 }}>
+                            {authBusy ? "Opening profile..." : "Create or log in"}
+                        </button>
+                    </form>
+
+                    {authMessage && <div style={{ marginTop: 12, padding: "11px 13px", borderRadius: 14, border: `1px solid ${accent}33`, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.04)", color: tx, fontSize: 12.5 }}>{authMessage}</div>}
+
+                    <div style={{ marginTop: 20 }}>
+                        <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: txm }}>Existing profiles</div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                            {visibleProfiles.length ? visibleProfiles.map(profile => (
+                                <button key={profile.id} onClick={() => handleLogin(profile.displayName)} disabled={authBusy} style={{ padding: "8px 12px", borderRadius: 999, border: `1px solid ${pBd}`, background: light ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.05)", color: tx, cursor: authBusy ? "wait" : "pointer", fontFamily: "'JetBrains Mono'", fontSize: 10 }}>
+                                    {profile.displayName}
+                                </button>
+                            )) : <div style={{ marginTop: 4, fontSize: 12.5, color: txm }}>No profiles yet. Your first login creates one automatically.</div>}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </>;
+    }
 
     return <WidgetRegistryCtx.Provider value={widgetRegistry}>
         <DragBoundsCtx.Provider value={canvasBounds}>
@@ -480,6 +697,16 @@ export default function App() {
                         </div>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+                        <div style={{ maxWidth: 320, padding: "10px 12px", borderRadius: 16, background: light ? "rgba(255,255,255,0.62)" : "rgba(255,255,255,0.045)", border: `1px solid ${pBd}`, boxShadow: light ? "0 8px 18px rgba(0,0,0,0.04)" : "0 12px 28px rgba(0,0,0,0.16)" }}>
+                            <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 8.5, letterSpacing: 1.5, textTransform: "uppercase", color: accent }}>Profile</div>
+                            <div style={{ marginTop: 5, fontSize: 15, fontWeight: 700, color: tx }}>{profileMeta?.displayName}</div>
+                            <div style={{ marginTop: 4, fontSize: 10.5, color: txm, lineHeight: 1.45 }}>Last saved {profileUpdatedLabel}</div>
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end", marginTop: 10 }}>
+                                <button onClick={handleLogout} style={{ padding: "6px 10px", borderRadius: 999, border: `1px solid ${pBd}`, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.035)", color: txm, cursor: "pointer", fontFamily: "'JetBrains Mono'", fontSize: 9.5 }}>Log out</button>
+                                <button onClick={handleClearProfile} style={{ padding: "6px 10px", borderRadius: 999, border: `1px solid rgba(255,107,107,0.35)`, background: "rgba(255,107,107,0.12)", color: light ? "#c0392b" : "#ffb3b3", cursor: "pointer", fontFamily: "'JetBrains Mono'", fontSize: 9.5 }}>Clear profile</button>
+                            </div>
+                        </div>
+                        {authMessage && <div style={{ maxWidth: 320, padding: "8px 10px", borderRadius: 14, background: light ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.05)", border: `1px solid ${accent}2e`, color: tx, fontSize: 10.5, lineHeight: 1.4 }}>{authMessage}</div>}
                         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
                             <button onClick={() => setShowPostitLibrary(true)} style={{ padding: "5px 10px", borderRadius: 999, fontSize: 9.5, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: showPostitLibrary ? `${accent}24` : (light ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)"), border: `1px solid ${showPostitLibrary ? `${accent}50` : pBd}`, color: showPostitLibrary ? accent : txm, display: "flex", alignItems: "center", gap: 4, transition: "all 0.2s" }}><span style={{ fontSize: 10 }}>📝</span> Post-its</button>
                             {togs.map(t => <button key={t.k} onClick={() => t.f(v => !v)} style={{ padding: "5px 10px", borderRadius: 999, fontSize: 9.5, cursor: "pointer", fontFamily: "'JetBrains Mono'", background: t.s ? `${accent}20` : (light ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.04)"), border: `1px solid ${t.s ? `${accent}40` : pBd}`, color: t.s ? accent : txm, display: "flex", alignItems: "center", gap: 4, transition: "all 0.2s" }}><span style={{ fontSize: 10 }}>{t.i}</span> {t.l}</button>)}
