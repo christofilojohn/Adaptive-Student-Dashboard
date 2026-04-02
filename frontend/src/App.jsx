@@ -186,8 +186,14 @@ export default function App() {
                 setProfileNameInput(payload.profile.displayName);
                 setProfileStatus("ready");
                 setAuthMessage("");
-            } catch {
-                if (!cancelled) resetProfileShell("Saved session expired. Sign in again.");
+        } catch (error) {
+            if (!cancelled) {
+                if (error && /unauthorized|401/i.test(error.message)) {
+                    resetProfileShell("Saved session expired. Sign in again.");
+                } else {
+                    setProfileStatus("logged_out");
+                    setAuthMessage("Could not reach the server. Please try again.");
+                }
             }
         })();
 
