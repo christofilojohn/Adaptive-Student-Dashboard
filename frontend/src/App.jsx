@@ -394,10 +394,7 @@ export default function App() {
         noteCompanion({ type: "note_added", userText: "New sticky note", mood: "creative" });
     };
     const updatePostit = (id, updates) => setPostits(pp => pp.map(n => n.id === id ? { ...n, ...updates } : n));
-    const updatePostitContent = (id, value) => {
-        updatePostit(id, { content: value });
-        noteCompanion({ type: "note_added", userText: value, mood: "creative" });
-    };
+    const updatePostitContent = (id, value) => updatePostit(id, { content: value });
     const toggleTask = (id) => {
         const target = tasks.find(tk => tk.id === id);
         if (!target) return;
