@@ -138,7 +138,7 @@ RUN chmod +x /docker/run-llama.sh /entrypoint.sh
 
 EXPOSE 3000
 
-VOLUME ["/models"]
+VOLUME ["/models", "/var/lib/adaptive-dashboard"]
 ENV MODEL_PATH=/models/Phi-3.5-mini-instruct-Q4_K_M.gguf
 ENV LLM_CONTEXT=4096
 ENV LLM_THREADS=4
