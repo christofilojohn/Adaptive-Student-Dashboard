@@ -4,6 +4,8 @@ import { useDraggable } from "../drag";
 import { guessEmoji } from "../utils";
 import { EditableText } from "./shared";
 
+const FLOATING_WIDGET_TOP = 210;
+
 export function PostIt({ id, content, color, initialX, initialY, onRemove, onEdit }) {
     const { pos, onMouseDown, dragRef } = useDraggable(initialX, initialY);
     const rot = useRef((-3 + Math.random() * 6).toFixed(1));
@@ -21,7 +23,7 @@ export function PostIt({ id, content, color, initialX, initialY, onRemove, onEdi
 export function TimerWidget({ id, minutes, label, onRemove, light }) {
     const [left, setLeft] = useState(minutes * 60);
     const [run, setRun] = useState(true);
-    const { pos, onMouseDown, dragRef } = useDraggable(420 + Math.random() * 150, 40 + Math.random() * 100);
+    const { pos, onMouseDown, dragRef } = useDraggable(420 + Math.random() * 150, FLOATING_WIDGET_TOP + Math.random() * 70);
     useEffect(() => { if (!run || left <= 0) return; const t = setInterval(() => setLeft(s => Math.max(0, s - 1)), 1000); return () => clearInterval(t); }, [run, left]);
     const done = left <= 0;
     const pct = 1 - left / (minutes * 60);
@@ -43,7 +45,7 @@ export function TimerWidget({ id, minutes, label, onRemove, light }) {
 
 export function ClockWidget({ id, onRemove, light }) {
     const [now, setNow] = useState(new Date());
-    const { pos, onMouseDown, dragRef } = useDraggable(450 + Math.random() * 100, 180 + Math.random() * 80);
+    const { pos, onMouseDown, dragRef } = useDraggable(450 + Math.random() * 100, FLOATING_WIDGET_TOP + 70 + Math.random() * 70);
     useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
     const c = light ? { bg: "rgba(255,255,255,0.65)", bd: "rgba(0,0,0,0.08)", tx: "#2d3436", txm: "rgba(45,52,54,0.3)" } : { bg: "rgba(255,255,255,0.04)", bd: "rgba(255,255,255,0.08)", tx: "#fff", txm: "rgba(255,255,255,0.3)" };
     return <div ref={dragRef} onMouseDown={onMouseDown} style={{ position: "absolute", left: pos.x, top: pos.y, background: c.bg, backdropFilter: "blur(20px)", border: `1px solid ${c.bd}`, borderRadius: 18, padding: "16px 24px", cursor: "grab", userSelect: "none", zIndex: 12, boxShadow: "0 6px 24px rgba(0,0,0,0.15)" }}>
@@ -56,7 +58,7 @@ export function ClockWidget({ id, onRemove, light }) {
 export function QuoteWidget({ id, onRemove, light }) {
     const qs = [{ t: "The only way to do great work is to love what you do.", a: "Jobs" }, { t: "What stands in the way becomes the way.", a: "Aurelius" }, { t: "Simplicity is the ultimate sophistication.", a: "Da Vinci" }, { t: "Everything you can imagine is real.", a: "Picasso" }];
     const q = useRef(qs[Math.floor(Math.random() * qs.length)]);
-    const { pos, onMouseDown, dragRef } = useDraggable(400 + Math.random() * 200, 300 + Math.random() * 80);
+    const { pos, onMouseDown, dragRef } = useDraggable(400 + Math.random() * 200, FLOATING_WIDGET_TOP + 150 + Math.random() * 70);
     const c = light ? { bg: "rgba(255,255,255,0.65)", bd: "rgba(0,0,0,0.06)", tx: "rgba(45,52,54,0.8)", txm: "rgba(45,52,54,0.3)" } : { bg: "rgba(255,255,255,0.03)", bd: "rgba(255,255,255,0.06)", tx: "rgba(255,255,255,0.8)", txm: "rgba(255,255,255,0.3)" };
     return <div ref={dragRef} onMouseDown={onMouseDown} style={{ position: "absolute", left: pos.x, top: pos.y, maxWidth: 250, background: c.bg, backdropFilter: "blur(20px)", border: `1px solid ${c.bd}`, borderRadius: 14, padding: "18px 20px", cursor: "grab", userSelect: "none", zIndex: 12, boxShadow: "0 6px 24px rgba(0,0,0,0.15)" }}>
         <button onClick={e => { e.stopPropagation(); onRemove(id); }} style={{ position: "absolute", top: 5, right: 9, background: "none", border: "none", color: "rgba(128,128,128,0.25)", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>×</button>

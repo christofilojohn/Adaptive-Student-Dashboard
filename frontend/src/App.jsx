@@ -582,7 +582,7 @@ export default function App() {
     const noteColors = ["#fef68a", "#ffd6a5", "#caffbf", "#bde0fe", "#e9d5ff"];
     const getNextPostitPosition = (count) => ({
         x: 1025 + (count % 4) * 26,
-        y: 245 + (count % 4) * 22
+        y: Math.max(headerLockY + 40, 245) + (count % 4) * 22
     });
     const selectedPostit = postits.find(p => p.id === selectedPostitId) || null;
     const createPostit = () => {
