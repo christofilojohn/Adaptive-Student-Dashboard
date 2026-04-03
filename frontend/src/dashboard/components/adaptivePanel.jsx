@@ -31,6 +31,14 @@ export function AdaptivePanel({
                         <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 1.3, textTransform: "uppercase", color: txm }}>Live analysis</div>
                         <div style={{ marginTop: 5, fontSize: 20, fontWeight: 700, color: tx }}>{analysis.pressureLabel}</div>
                         <div style={{ marginTop: 3, fontSize: 10, color: txm, lineHeight: 1.45 }}>{analysis.summary}</div>
+                        <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            <span style={{ padding: "4px 7px", borderRadius: 999, background: light ? "rgba(0,0,0,0.035)" : "rgba(255,255,255,0.05)", border: `1px solid ${accent}22`, color: accent, fontFamily: "'JetBrains Mono'", fontSize: 8 }}>
+                                {analysis.modelStatus}
+                            </span>
+                            <span style={{ padding: "4px 7px", borderRadius: 999, background: light ? "rgba(0,0,0,0.035)" : "rgba(255,255,255,0.05)", border: `1px solid ${light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`, color: txm, fontFamily: "'JetBrains Mono'", fontSize: 8 }}>
+                                {analysis.modelConfidenceLabel}
+                            </span>
+                        </div>
                     </div>
                     <div style={{ minWidth: 68, padding: "8px 10px", borderRadius: 14, background: `${pressureTone}18`, border: `1px solid ${pressureTone}40`, textAlign: "center" }}>
                         <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, letterSpacing: 1.2, textTransform: "uppercase", color: pressureTone }}>Pressure</div>
@@ -53,6 +61,9 @@ export function AdaptivePanel({
                         <button onClick={onToggleAutoAdapt} style={{ padding: "5px 9px", borderRadius: 999, border: `1px solid ${autoAdapt ? `${accent}55` : "rgba(148,163,184,0.28)"}`, background: autoAdapt ? `${accent}18` : "transparent", color: autoAdapt ? accent : txm, cursor: "pointer", fontFamily: "'JetBrains Mono'", fontSize: 8.5 }}>
                             {autoAdapt ? "Auto on" : "Auto off"}
                         </button>
+                    </div>
+                    <div style={{ marginTop: 8, fontSize: 9.5, color: txm, lineHeight: 1.45 }}>
+                        {analysis.modelSummary}
                     </div>
                 </div>
 

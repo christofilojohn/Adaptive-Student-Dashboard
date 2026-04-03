@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { DragBoundsCtx, HeaderLockCtx, WidgetRegistryCtx } from "./dashboard/drag";
 import { DEFAULT_AMBIENT, LLM_CONFIG, MODULE_COLORS, POSTIT_CHAR_LIMIT } from "./dashboard/constants";
 import { callAmbientLLM, callLLM } from "./dashboard/llm";
-import { analyzeAdaptiveState } from "./dashboard/adaptive";
+import { analyzeAdaptiveState, reinforceAdaptiveModel } from "./dashboard/adaptive";
 import { deriveCompanionView, evolveCompanionState } from "./dashboard/companion";
 import { inferMood, toLocalDateStr } from "./dashboard/utils";
 import { clearProfile, clearStoredSessionToken, fetchProfiles, loginProfile, logoutProfile, restoreSession, saveProfileState } from "./dashboard/profileApi";
@@ -40,6 +40,7 @@ export default function App() {
     const [budget, setBudgetVal] = useState(initialState.budget);
     const [weeklyGoalCategory, setWeeklyGoalCategory] = useState(initialState.weeklyGoalCategory);
     const [weeklyGoalTarget, setWeeklyGoalTarget] = useState(initialState.weeklyGoalTarget);
+    const [adaptiveModel, setAdaptiveModel] = useState(initialState.adaptiveModel);
     const [input, setInput] = useState(""), [loading, setLoading] = useState(false);
     const [lennyMood, setLennyMood] = useState(initialState.lennyMood);
     const [companion, setCompanion] = useState(initialState.companion);
@@ -114,6 +115,7 @@ export default function App() {
         setBudgetVal(next.budget);
         setWeeklyGoalCategory(next.weeklyGoalCategory);
         setWeeklyGoalTarget(next.weeklyGoalTarget);
+        setAdaptiveModel(next.adaptiveModel);
         setInput("");
         setLoading(false);
         setLennyMood(next.lennyMood);
@@ -148,10 +150,11 @@ export default function App() {
         budget,
         weeklyGoalCategory,
         weeklyGoalTarget,
+        adaptiveModel,
         lennyMood,
         companion,
         msgs,
-    }), [accent, ambient, autoAdapt, bg, budget, companion, events, expenses, greeting, lennyMood, modules, msgs, postits, showAdaptive, showBudget, showCal, showRewards, showTCDModules, showTasks, showTimetable, showWeather, tasks, tcdDegree, timetable, timers, weeklyGoalCategory, weeklyGoalTarget, widgets]);
+    }), [accent, adaptiveModel, ambient, autoAdapt, bg, budget, companion, events, expenses, greeting, lennyMood, modules, msgs, postits, showAdaptive, showBudget, showCal, showRewards, showTCDModules, showTasks, showTimetable, showWeather, tasks, tcdDegree, timetable, timers, weeklyGoalCategory, weeklyGoalTarget, widgets]);
 
     const loadProfileDirectory = useCallback(async () => {
         try {
@@ -305,12 +308,25 @@ export default function App() {
         }
     }, [noteCompanion, setMoodWithCompanion, themes]);
 
-    const startAdaptiveSprint = useCallback((taskText) => {
+    const startAdaptiveSprint = useCallback((sprintTask) => {
+        const taskText = sprintTask?.text || "";
         const label = taskText ? `Focus: ${taskText}` : "Adaptive sprint";
         setTimers(current => [...current, { id: gid(), minutes: 45, label: label.length > 32 ? `${label.slice(0, 29)}...` : label }]);
+        if (sprintTask) {
+            setAdaptiveModel(prev => reinforceAdaptiveModel({
+                adaptiveModel: prev,
+                tasks,
+                events,
+                expenses,
+                budget,
+                modules,
+                sprintTask,
+                now: companionNow,
+            }));
+        }
         noteCompanion({ type: "timer_started", userText: taskText || "Adaptive sprint", mood: "focus" });
         setMoodWithCompanion("focus", "timer_started");
-    }, [noteCompanion, setMoodWithCompanion]);
+    }, [budget, companionNow, events, expenses, modules, noteCompanion, setMoodWithCompanion, tasks]);
 
     const snap = () => ({
         tasks: tasks.slice(0, 10).map(t => t.text + (t.done ? " ✓" : "")),
@@ -366,6 +382,20 @@ export default function App() {
                 noteCompanion({ type: "task_added", userText: a.text || "New task", mood: "productive" });
             }
             else if (t === "complete_task" && a.text) {
+                const matchedTasks = tasks.filter(tk => !tk.done && !tk.isParent && String(tk.text).toLowerCase().includes(String(a.text).toLowerCase()));
+                if (matchedTasks.length === 1) {
+                    setAdaptiveModel(prev => reinforceAdaptiveModel({
+                        adaptiveModel: prev,
+                        tasks,
+                        events,
+                        expenses,
+                        budget,
+                        modules,
+                        completedTask: matchedTasks[0],
+                        recommendedTask: adaptiveInsights?.recommendedTask,
+                        now: companionNow,
+                    }));
+                }
                 setTasks(p => p.map(tk => !tk.done && !tk.isParent && String(tk.text).toLowerCase().includes(String(a.text).toLowerCase()) ? { ...tk, done: true } : tk));
                 noteCompanion({ type: "task_completed", userText: a.text, mood: "proud" });
                 setMoodWithCompanion("proud", "task_completed");
@@ -529,8 +559,9 @@ export default function App() {
         expenses,
         budget,
         modules,
+        adaptiveModel,
         now: companionNow,
-    }), [budget, companionNow, events, expenses, modules, tasks]);
+    }), [adaptiveModel, budget, companionNow, events, expenses, modules, tasks]);
     const statCards = [
         { label: "Pressure", value: adaptiveInsights.pressureLabel, helper: adaptiveInsights.suggestedMode === "minimal" ? "Reduce noise" : "Adaptive signal" },
         { label: "Active tasks", value: activeTasks, helper: activeTasks <= 2 ? "On track" : "Busy week" },
@@ -609,6 +640,19 @@ export default function App() {
         const target = tasks.find(tk => tk.id === id);
         if (!target) return;
         const nextDone = !target.done;
+        if (nextDone && !target.isParent) {
+            setAdaptiveModel(prev => reinforceAdaptiveModel({
+                adaptiveModel: prev,
+                tasks,
+                events,
+                expenses,
+                budget,
+                modules,
+                completedTask: target,
+                recommendedTask: adaptiveInsights?.recommendedTask,
+                now: companionNow,
+            }));
+        }
         noteCompanion({ type: nextDone ? "task_completed" : "planning", userText: target.text, mood: nextDone ? "proud" : "productive" });
         if (nextDone) setMoodWithCompanion("proud", "task_completed");
         setTasks(t => t.map(tk => tk.id === id ? { ...tk, done: nextDone } : tk));
@@ -845,7 +889,7 @@ export default function App() {
                 {showAdaptive && <AdaptivePanel analysis={adaptiveInsights} autoAdapt={autoAdapt} onToggleAutoAdapt={() => setAutoAdapt(value => !value)} onApplySuggestedMode={() => {
                     setAutoAdapt(false);
                     applyThemePreset(adaptiveInsights.suggestedMode, { greetingText: adaptiveInsights.suggestedGreeting, reason: "manual_adaptive_mode" });
-                }} onStartSprint={() => startAdaptiveSprint(adaptiveInsights.recommendedTask?.text)} accent={accent} light={light} ambient={ambient} onClose={() => setShowAdaptive(false)} />}
+                }} onStartSprint={() => startAdaptiveSprint(adaptiveInsights.recommendedTask)} accent={accent} light={light} ambient={ambient} onClose={() => setShowAdaptive(false)} />}
                 {showTCDModules && <TCDModulesPanel modules={modules} tcdDegree={tcdDegree} onSetDegree={setTcdDegree} onAddModule={m => setModules(p => p.some(x => x.code === m.code) ? p : [...p, m])} onRemoveModule={id => setModules(p => p.filter(m => m.id !== id))} accent={accent} light={light} onClose={() => setShowTCDModules(false)} ambient={ambient} />}
                 {showTimetable && <TimetablePanel modules={modules} timetable={timetable} onAddSlot={s => setTimetable(p => [...p, s])} onRemoveSlot={id => setTimetable(p => p.filter(s => s.id !== id))} accent={accent} light={light} onClose={() => setShowTimetable(false)} ambient={ambient} />}
 

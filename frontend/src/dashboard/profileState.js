@@ -1,3 +1,4 @@
+import { createInitialAdaptiveModel, normalizeAdaptiveModel } from "./adaptive";
 import { createInitialCompanionState } from "./companion";
 import { DEFAULT_AMBIENT, LLM_CONFIG } from "./constants";
 import { toLocalDateStr } from "./utils";
@@ -56,6 +57,7 @@ export function createDefaultDashboardState() {
         budget: 500,
         weeklyGoalCategory: "tasks",
         weeklyGoalTarget: 5,
+        adaptiveModel: createInitialAdaptiveModel(),
         lennyMood: "neutral",
         companion: createInitialCompanionState(),
         msgs: [createInitialAssistantMessage()],
@@ -78,6 +80,7 @@ export function normalizeDashboardState(rawState = {}) {
         widgets: Array.isArray(state.widgets) ? state.widgets : defaults.widgets,
         events: Array.isArray(state.events) ? state.events : defaults.events,
         expenses: Array.isArray(state.expenses) ? state.expenses : defaults.expenses,
+        adaptiveModel: normalizeAdaptiveModel(state.adaptiveModel),
         companion: { ...createInitialCompanionState(), ...(state.companion || {}) },
         msgs: Array.isArray(state.msgs) && state.msgs.length ? state.msgs : defaults.msgs,
     };

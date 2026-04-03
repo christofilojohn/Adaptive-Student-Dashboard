@@ -7,9 +7,56 @@ const PRIORITY_WEIGHTS = {
 };
 
 const ACADEMIC_HINTS = /\b(study|review|exam|lecture|module|assignment|report|draft|research|read|presentation|slides|deadline)\b/i;
+const QUICK_WIN_LIMIT = 42;
+const LONG_TASK_LIMIT = 70;
+
+const DEFAULT_MODEL = {
+    version: 1,
+    weights: {
+        bias: 0.12,
+        priorityHigh: 0.9,
+        priorityMedium: 0.45,
+        academic: 0.72,
+        eventOverlap: 0.68,
+        moduleOverlap: 0.44,
+        quickWin: 0.26,
+        longTaskPenalty: -0.18,
+        pressure: 0.24,
+        budgetPressure: -0.1,
+    },
+    stats: {
+        feedbackCount: 0,
+        recommendationWins: 0,
+        recommendationMisses: 0,
+        sprintStarts: 0,
+    },
+};
 
 function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
+}
+
+function sigmoid(value) {
+    return 1 / (1 + Math.exp(-value));
+}
+
+function round(value, precision = 3) {
+    const factor = 10 ** precision;
+    return Math.round(value * factor) / factor;
+}
+
+export function createInitialAdaptiveModel() {
+    return JSON.parse(JSON.stringify(DEFAULT_MODEL));
+}
+
+export function normalizeAdaptiveModel(rawModel) {
+    const model = rawModel && typeof rawModel === "object" ? rawModel : {};
+    return {
+        ...DEFAULT_MODEL,
+        ...model,
+        weights: { ...DEFAULT_MODEL.weights, ...(model.weights || {}) },
+        stats: { ...DEFAULT_MODEL.stats, ...(model.stats || {}) },
+    };
 }
 
 function parseLocalDate(dateStr, time = "09:00") {
@@ -53,6 +100,12 @@ function describePressure(pressure) {
     if (pressure >= 72) return "High pressure";
     if (pressure >= 42) return "Medium pressure";
     return "Low pressure";
+}
+
+function describeModelReadiness(feedbackCount) {
+    if (feedbackCount >= 10) return "Personalized";
+    if (feedbackCount >= 4) return "Learning your patterns";
+    return "Warm-up mode";
 }
 
 function buildSuggestedMode({ pressure, budgetProgress, activeTasks, eventsToday, hour }) {
@@ -117,23 +170,7 @@ function buildFocusWindow(now, events) {
     return { ...bestWindow, minutes: bestGap };
 }
 
-function rankTask(task, context) {
-    const priorityScore = (PRIORITY_WEIGHTS[task.priority] || 1) * 22;
-    const overlap = overlapScore(task.text, context.keywordSources);
-    const academicBoost = ACADEMIC_HINTS.test(task.text) ? 12 : 0;
-    const pressureBoost = context.pressure >= 72 ? (PRIORITY_WEIGHTS[task.priority] || 1) * 8 : 0;
-    const eventBoost = overlap > 0 && context.eventsSoon > 0 ? 14 : 0;
-    const score = priorityScore + overlap * 10 + academicBoost + pressureBoost + eventBoost;
-
-    let reason = "Highest priority open task";
-    if (overlap > 0 && context.closestMatchingEvent) reason = `Aligns with ${context.closestMatchingEvent.title}`;
-    else if (academicBoost) reason = "Strong academic signal";
-    else if (context.pressure >= 72) reason = "Best pressure-release task";
-
-    return { ...task, score, reason };
-}
-
-export function analyzeAdaptiveState({
+function buildAdaptiveContext({
     tasks,
     events,
     expenses,
@@ -163,70 +200,240 @@ export function analyzeAdaptiveState({
 
     const eventKeywords = futureEvents.slice(0, 5).map(event => buildKeywordSet(event.title));
     const moduleKeywords = modules.slice(0, 6).map(module => buildKeywordSet(`${module.code} ${module.name}`));
-    const focusWindow = buildFocusWindow(currentTime, upcomingEvents);
-    const keywordSources = [...eventKeywords, ...moduleKeywords];
-    const closestMatchingEvent = futureEvents.find(event => {
-        const eventKeywords = buildKeywordSet(event.title);
-        return activeTasks.some(task => overlapScore(task.text, [eventKeywords]) > 0);
-    }) || null;
 
-    const recommendedTask = activeTasks.length
-        ? [...activeTasks]
-            .map(task => rankTask(task, { keywordSources, pressure, eventsSoon, closestMatchingEvent }))
-            .sort((a, b) => b.score - a.score)[0]
-        : null;
-
-    const suggestedMode = buildSuggestedMode({
-        pressure,
+    return {
+        currentTime,
+        activeTasks,
+        completedTasks,
+        upcomingEvents,
+        futureEvents,
+        eventsToday,
+        eventsSoon,
         budgetProgress,
-        activeTasks: activeTasks.length,
-        eventsToday: eventsToday.length,
-        hour: currentTime.getHours(),
+        pressure,
+        eventKeywords,
+        moduleKeywords,
+        focusWindow: buildFocusWindow(currentTime, upcomingEvents),
+    };
+}
+
+function buildTaskFeatures(task, context) {
+    const eventOverlapRaw = overlapScore(task.text, context.eventKeywords);
+    const moduleOverlapRaw = overlapScore(task.text, context.moduleKeywords);
+    return {
+        bias: 1,
+        priorityHigh: task.priority === "high" ? 1 : 0,
+        priorityMedium: task.priority === "medium" ? 1 : 0,
+        academic: ACADEMIC_HINTS.test(task.text) ? 1 : 0,
+        eventOverlap: clamp(eventOverlapRaw / 2, 0, 1),
+        moduleOverlap: clamp(moduleOverlapRaw / 2, 0, 1),
+        quickWin: task.text.length <= QUICK_WIN_LIMIT ? 1 : 0,
+        longTaskPenalty: task.text.length >= LONG_TASK_LIMIT ? 1 : 0,
+        pressure: context.pressure / 100,
+        budgetPressure: context.budgetProgress >= 85 ? 1 : 0,
+    };
+}
+
+function dotProduct(weights, features) {
+    let total = 0;
+    for (const [key, value] of Object.entries(features)) total += (weights[key] || 0) * value;
+    return total;
+}
+
+function buildReason(task, context, learnedScore, probability) {
+    const eventOverlap = overlapScore(task.text, context.eventKeywords);
+    const moduleOverlap = overlapScore(task.text, context.moduleKeywords);
+    const personalized = probability >= 0.64 && context.model.stats.feedbackCount >= 3;
+
+    if (eventOverlap > 0) return personalized ? "Matches your schedule and learned study pattern" : "Aligns with an upcoming event";
+    if (moduleOverlap > 0) return personalized ? "Looks like coursework you tend to act on first" : "Strong module/coursework match";
+    if (task.priority === "high" && personalized) return "High priority and reinforced by your recent completions";
+    if (task.priority === "high") return "Highest priority open task";
+    if (ACADEMIC_HINTS.test(task.text) && learnedScore >= 0.4) return "Academic task with a strong model signal";
+    if (ACADEMIC_HINTS.test(task.text)) return "Strong academic signal";
+    if (context.pressure >= 72) return "Best pressure-release task";
+    return personalized ? "Model predicts this is your most likely next win" : "Best next move from the current board";
+}
+
+function rankTask(task, context) {
+    const heuristicPriority = (PRIORITY_WEIGHTS[task.priority] || 1) * 22;
+    const eventOverlap = overlapScore(task.text, context.eventKeywords);
+    const moduleOverlap = overlapScore(task.text, context.moduleKeywords);
+    const academicBoost = ACADEMIC_HINTS.test(task.text) ? 12 : 0;
+    const pressureBoost = context.pressure >= 72 ? (PRIORITY_WEIGHTS[task.priority] || 1) * 8 : 0;
+    const eventBoost = eventOverlap > 0 && context.eventsSoon > 0 ? 14 : 0;
+    const heuristicScore = heuristicPriority + eventOverlap * 10 + moduleOverlap * 6 + academicBoost + pressureBoost + eventBoost;
+
+    const features = buildTaskFeatures(task, context);
+    const learnedScore = dotProduct(context.model.weights, features);
+    const probability = sigmoid(learnedScore);
+    const score = heuristicScore + learnedScore * 14;
+
+    return {
+        ...task,
+        score,
+        heuristicScore,
+        learnedScore,
+        probability,
+        features,
+        reason: buildReason(task, context, learnedScore, probability),
+    };
+}
+
+function nudgedWeights(weights, features, direction, rate) {
+    const next = { ...weights };
+    for (const [key, value] of Object.entries(features)) {
+        next[key] = round((next[key] || 0) + direction * rate * value, 4);
+    }
+    return next;
+}
+
+function applyFeedback(model, positiveTask, negativeTask, context, feedbackType) {
+    const normalized = normalizeAdaptiveModel(model);
+    const feedbackCount = normalized.stats.feedbackCount;
+    const baseRate = 0.22 / Math.sqrt(feedbackCount + 1);
+    const positiveRate = feedbackType === "sprint_start" ? baseRate * 0.55 : baseRate;
+    const negativeRate = feedbackType === "missed_recommendation" ? baseRate * 0.5 : baseRate * 0.35;
+
+    let weights = { ...normalized.weights };
+
+    if (positiveTask) {
+        weights = nudgedWeights(weights, buildTaskFeatures(positiveTask, context), 1, positiveRate);
+    }
+
+    if (negativeTask) {
+        weights = nudgedWeights(weights, buildTaskFeatures(negativeTask, context), -1, negativeRate);
+    }
+
+    return {
+        ...normalized,
+        weights,
+        stats: {
+            ...normalized.stats,
+            feedbackCount: normalized.stats.feedbackCount + 1,
+            sprintStarts: normalized.stats.sprintStarts + (feedbackType === "sprint_start" ? 1 : 0),
+            recommendationWins: normalized.stats.recommendationWins + (feedbackType === "recommendation_win" ? 1 : 0),
+            recommendationMisses: normalized.stats.recommendationMisses + (feedbackType === "missed_recommendation" ? 1 : 0),
+        },
+    };
+}
+
+export function analyzeAdaptiveState({
+    tasks,
+    events,
+    expenses,
+    budget,
+    modules,
+    adaptiveModel,
+    now = Date.now(),
+}) {
+    const model = normalizeAdaptiveModel(adaptiveModel);
+    const context = {
+        ...buildAdaptiveContext({ tasks, events, expenses, budget, modules, now }),
+        model,
+    };
+
+    const rankedTasks = context.activeTasks.length
+        ? [...context.activeTasks]
+            .map(task => rankTask(task, context))
+            .sort((a, b) => b.score - a.score)
+        : [];
+
+    const recommendedTask = rankedTasks[0] || null;
+    const suggestedMode = buildSuggestedMode({
+        pressure: context.pressure,
+        budgetProgress: context.budgetProgress,
+        activeTasks: context.activeTasks.length,
+        eventsToday: context.eventsToday.length,
+        hour: context.currentTime.getHours(),
     });
 
-    const pressureLabel = describePressure(pressure);
+    const pressureLabel = describePressure(context.pressure);
+    const feedbackCount = model.stats.feedbackCount;
+    const margin = rankedTasks.length > 1 ? Math.max(0, rankedTasks[0].score - rankedTasks[1].score) : (rankedTasks[0]?.score || 0);
+    const modelConfidence = clamp(0.48 + feedbackCount * 0.035 + Math.min(margin, 18) * 0.01, 0.52, 0.96);
+    const modelStatus = describeModelReadiness(feedbackCount);
+
     const evidence = [
-        `${activeTasks.length} active task${activeTasks.length === 1 ? "" : "s"} on the board`,
-        `${eventsSoon} event${eventsSoon === 1 ? "" : "s"} within the next 48h`,
-        budget > 0 ? `${clamp(budgetProgress, 0, 999)}% of weekly budget used` : "Budget tracking available",
+        `${context.activeTasks.length} active task${context.activeTasks.length === 1 ? "" : "s"} on the board`,
+        `${context.eventsSoon} event${context.eventsSoon === 1 ? "" : "s"} within the next 48h`,
+        budget > 0 ? `${clamp(context.budgetProgress, 0, 999)}% of weekly budget used` : "Budget tracking available",
     ];
 
     const coaching = [
         recommendedTask
             ? `Prioritize "${recommendedTask.text}" because ${recommendedTask.reason.toLowerCase()}.`
             : "Add or reopen a task to generate a next-step recommendation.",
-        focusWindow
-            ? `Best focus window: ${focusWindow.label} ${focusWindow.reason}.`
+        context.focusWindow
+            ? `Best focus window: ${context.focusWindow.label} ${context.focusWindow.reason}.`
             : "Calendar is dense today, so keep the next task intentionally small.",
-        budgetProgress >= 85
-            ? "Spending is high, so the interface shifts toward a lower-distraction mode."
-            : budgetProgress >= 70
-                ? "Budget is climbing, so keep an eye on optional spending."
-                : "Budget pressure is low enough to keep attention on coursework.",
+        feedbackCount >= 3
+            ? `Learner is using ${feedbackCount} recent signal${feedbackCount === 1 ? "" : "s"} from your completions and sprints.`
+            : "Learner starts with academic priors and quickly tunes itself after a few completions.",
     ];
 
     return {
-        pressure,
+        pressure: context.pressure,
         pressureLabel,
         summary: `${pressureLabel} · ${suggestedMode} mode recommended`,
         suggestedMode,
         suggestedGreeting: buildGreeting({
-            pressure,
-            eventsSoon,
-            budgetProgress,
-            focusWindow,
+            pressure: context.pressure,
+            eventsSoon: context.eventsSoon,
+            budgetProgress: context.budgetProgress,
+            focusWindow: context.focusWindow,
             recommendedTask,
         }),
         recommendedTask,
-        focusWindow,
+        rankedTasks,
+        focusWindow: context.focusWindow,
         evidence,
         coaching,
+        modelStatus,
+        modelConfidence,
+        modelConfidenceLabel: `${Math.round(modelConfidence * 100)}% confidence`,
+        modelSummary: feedbackCount >= 3
+            ? `${modelStatus} from ${feedbackCount} interaction${feedbackCount === 1 ? "" : "s"}`
+            : "Bootstrapped from study-task priors",
         stats: {
-            activeTasks: activeTasks.length,
-            completedTasks,
-            eventsSoon,
-            eventsToday: eventsToday.length,
-            budgetProgress,
+            activeTasks: context.activeTasks.length,
+            completedTasks: context.completedTasks,
+            eventsSoon: context.eventsSoon,
+            eventsToday: context.eventsToday.length,
+            budgetProgress: context.budgetProgress,
+            feedbackCount,
+            recommendationWins: model.stats.recommendationWins,
+            recommendationMisses: model.stats.recommendationMisses,
+            sprintStarts: model.stats.sprintStarts,
         },
     };
+}
+
+export function reinforceAdaptiveModel({
+    adaptiveModel,
+    tasks,
+    events,
+    expenses,
+    budget,
+    modules,
+    completedTask,
+    recommendedTask,
+    sprintTask,
+    now = Date.now(),
+}) {
+    const model = normalizeAdaptiveModel(adaptiveModel);
+    const context = buildAdaptiveContext({ tasks, events, expenses, budget, modules, now });
+
+    if (completedTask) {
+        if (recommendedTask && recommendedTask.id !== completedTask.id) {
+            return applyFeedback(model, completedTask, recommendedTask, context, "missed_recommendation");
+        }
+        return applyFeedback(model, completedTask, null, context, "recommendation_win");
+    }
+
+    if (sprintTask) {
+        return applyFeedback(model, sprintTask, null, context, "sprint_start");
+    }
+
+    return model;
 }
