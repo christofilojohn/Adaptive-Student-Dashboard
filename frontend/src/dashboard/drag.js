@@ -6,7 +6,7 @@ export const WidgetRegistryCtx = createContext(null);
 
 const SNAP_GRID = 20;
 const SNAP_EDGE_THRESHOLD = 18;
-const TOP_SAFE_GAP = 32;
+const TOP_SAFE_GAP = 50;
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 

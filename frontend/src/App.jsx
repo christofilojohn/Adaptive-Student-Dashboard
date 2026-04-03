@@ -76,7 +76,7 @@ export default function App() {
             const headerRect = headerRef.current.getBoundingClientRect();
             const canvasRect = canvasRef.current.getBoundingClientRect();
             const canvasRelativeBottom = headerRect.bottom - canvasRect.top;
-            setHeaderLockY(Math.ceil(canvasRelativeBottom) + 16);
+            setHeaderLockY(Math.ceil(canvasRelativeBottom) + 40);
         };
 
         measureHeaderLock();
