@@ -312,108 +312,100 @@ export function WeatherWidget({ light, accent, ambient, onClose }) {
     const toneText = scene.accent;
 
     return (
-        <Panel x={645} y={590} width={248} title="Weather" icon="🌤️" onClose={onClose} ambient={ambient} light={light} accent={accent}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div
-                    style={{
-                        position: "relative",
-                        minHeight: 178,
-                        borderRadius: 18,
-                        overflow: "hidden",
-                        background: scene.sky,
-                        border: `1px solid ${scene.line}`,
-                        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -18px 40px rgba(0,0,0,0.14), 0 12px 26px rgba(0,0,0,0.18)`,
-                    }}
-                >
-                    <div style={{ position: "absolute", inset: 0, background: `radial-gradient(circle at 20% 18%, ${scene.haze} 0%, transparent 45%)` }} />
-                    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0))" }} />
-                    <WeatherMotion scene={scene} />
+        <Panel x={645} y={590} width={288} title="Weather" icon="🌤️" onClose={onClose} ambient={ambient} light={light} accent={accent}>
+            <div
+                style={{
+                    position: "relative",
+                    minHeight: 214,
+                    margin: "-9px -13px -13px",
+                    overflow: "hidden",
+                    background: scene.sky,
+                }}
+            >
+                <div style={{ position: "absolute", inset: 0, background: `radial-gradient(circle at 20% 18%, ${scene.haze} 0%, transparent 45%)` }} />
+                <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0))" }} />
+                <WeatherMotion scene={scene} />
 
-                    <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column", gap: 10, padding: "14px 14px 12px", color: toneText }}>
-                        <div style={{ position: "relative" }} data-nodrag>
-                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                                {editing ? (
-                                    <input
-                                        ref={inputRef}
-                                        value={query}
-                                        onChange={e => setQuery(e.target.value)}
-                                        onBlur={() => setTimeout(() => { setSuggestions([]); setEditing(false); }, 150)}
-                                        onKeyDown={e => {
-                                            if (e.key === "Escape") {
-                                                setQuery(weather?.name ?? query);
-                                                setSuggestions([]);
-                                                setEditing(false);
-                                            }
-                                            if (e.key === "Enter" && suggestions.length) pickSuggestion(suggestions[0]);
-                                        }}
-                                        autoFocus
-                                        style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 1.5, textTransform: "uppercase", color: toneText, background: "transparent", border: "none", borderBottom: `1px solid ${scene.line}`, outline: "none", width: "100%", paddingBottom: 2 }}
-                                    />
-                                ) : (
-                                    <button onClick={() => { setEditing(true); setTimeout(() => inputRef.current?.select(), 10); }} style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 1.5, textTransform: "uppercase", color: toneText, background: "none", border: "none", cursor: "text", padding: 0, textAlign: "left" }}>
-                                        {weather?.name ?? query}
-                                    </button>
-                                )}
-                                {weather && <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: `${toneText}cc`, letterSpacing: 1, flexShrink: 0 }}>{weather.country_code?.toUpperCase()}</span>}
-                            </div>
-                            {suggestions.length > 0 && (
-                                <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 999, marginTop: 6, background: panelBg, border: `1px solid ${borderCol}`, borderRadius: 10, overflow: "hidden", boxShadow: "0 8px 24px rgba(0,0,0,0.25)" }}>
-                                    {suggestions.map(s => (
-                                        <button key={s.id} onMouseDown={() => pickSuggestion(s)} style={{ display: "block", width: "100%", textAlign: "left", padding: "7px 10px", background: "none", border: "none", cursor: "pointer", borderBottom: `1px solid ${borderCol}` }} onMouseEnter={e => e.currentTarget.style.background = `${accent}18`} onMouseLeave={e => e.currentTarget.style.background = "none"}>
-                                            <div style={{ fontSize: 11, color: tx, fontWeight: 500 }}>{s.name}</div>
-                                            <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'", marginTop: 1 }}>
-                                                {[s.admin1, s.country].filter(Boolean).join(", ")}
-                                            </div>
-                                        </button>
-                                    ))}
-                                </div>
+                <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column", gap: 12, padding: "14px 14px 16px", color: toneText }}>
+                    <div style={{ position: "relative" }} data-nodrag>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                            {editing ? (
+                                <input
+                                    ref={inputRef}
+                                    value={query}
+                                    onChange={e => setQuery(e.target.value)}
+                                    onBlur={() => setTimeout(() => { setSuggestions([]); setEditing(false); }, 150)}
+                                    onKeyDown={e => {
+                                        if (e.key === "Escape") {
+                                            setQuery(weather?.name ?? query);
+                                            setSuggestions([]);
+                                            setEditing(false);
+                                        }
+                                        if (e.key === "Enter" && suggestions.length) pickSuggestion(suggestions[0]);
+                                    }}
+                                    autoFocus
+                                    style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 1.5, textTransform: "uppercase", color: toneText, background: "transparent", border: "none", borderBottom: `1px solid ${scene.line}`, outline: "none", width: "100%", paddingBottom: 2 }}
+                                />
+                            ) : (
+                                <button onClick={() => { setEditing(true); setTimeout(() => inputRef.current?.select(), 10); }} style={{ fontFamily: "'JetBrains Mono'", fontSize: 9, letterSpacing: 1.5, textTransform: "uppercase", color: toneText, background: "none", border: "none", cursor: "text", padding: 0, textAlign: "left" }}>
+                                    {weather?.name ?? query}
+                                </button>
                             )}
+                            {weather && <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, color: `${toneText}cc`, letterSpacing: 1, flexShrink: 0 }}>{weather.country_code?.toUpperCase()}</span>}
                         </div>
-
-                        {fetching && <div style={{ fontSize: 11, color: `${toneText}cc`, fontFamily: "'JetBrains Mono'" }}>Fetching live sky…</div>}
-                        {err && <div style={{ fontSize: 11, color: "#fee2e2" }}>{err}</div>}
-
-                        {weather && !fetching && (
-                            <>
-                                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-                                    <div>
-                                        <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, letterSpacing: 1.3, textTransform: "uppercase", opacity: 0.88 }}>{scene.label}</div>
-                                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
-                                            <span style={{ fontSize: 38, lineHeight: 1, filter: "drop-shadow(0 4px 10px rgba(0,0,0,0.18))" }}>{icon}</span>
-                                            <div>
-                                                <div style={{ fontSize: 32, fontWeight: 700, lineHeight: 1, fontFamily: "'JetBrains Mono'" }}>{Math.round(weather.temperature_2m)}°</div>
-                                                <div style={{ fontSize: 10, marginTop: 3, opacity: 0.84 }}>Feels like {Math.round(weather.apparent_temperature)}°</div>
-                                            </div>
+                        {suggestions.length > 0 && (
+                            <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 999, marginTop: 6, background: panelBg, border: `1px solid ${borderCol}`, borderRadius: 10, overflow: "hidden", boxShadow: "0 8px 24px rgba(0,0,0,0.25)" }}>
+                                {suggestions.map(s => (
+                                    <button key={s.id} onMouseDown={() => pickSuggestion(s)} style={{ display: "block", width: "100%", textAlign: "left", padding: "7px 10px", background: "none", border: "none", cursor: "pointer", borderBottom: `1px solid ${borderCol}` }} onMouseEnter={e => e.currentTarget.style.background = `${accent}18`} onMouseLeave={e => e.currentTarget.style.background = "none"}>
+                                        <div style={{ fontSize: 11, color: tx, fontWeight: 500 }}>{s.name}</div>
+                                        <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'", marginTop: 1 }}>
+                                            {[s.admin1, s.country].filter(Boolean).join(", ")}
                                         </div>
-                                    </div>
-                                    <div style={{ minWidth: 70, padding: "8px 10px", borderRadius: 14, background: "rgba(255,255,255,0.12)", backdropFilter: "blur(10px)", border: `1px solid ${scene.line}` }}>
-                                        <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 7.5, letterSpacing: 1.2, textTransform: "uppercase", opacity: 0.8 }}>Condition</div>
-                                        <div style={{ marginTop: 4, fontSize: 11, lineHeight: 1.35 }}>{desc}</div>
-                                    </div>
-                                </div>
-
-                                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 2 }}>
-                                    <div style={{ padding: "8px 9px", borderRadius: 12, background: "rgba(255,255,255,0.12)", backdropFilter: "blur(10px)", border: `1px solid ${scene.line}` }}>
-                                        <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 7.5, letterSpacing: 1, textTransform: "uppercase", opacity: 0.78 }}>Humidity</div>
-                                        <div style={{ marginTop: 5, fontSize: 13, fontWeight: 700 }}>{weather.relative_humidity_2m}%</div>
-                                    </div>
-                                    <div style={{ padding: "8px 9px", borderRadius: 12, background: "rgba(255,255,255,0.12)", backdropFilter: "blur(10px)", border: `1px solid ${scene.line}` }}>
-                                        <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 7.5, letterSpacing: 1, textTransform: "uppercase", opacity: 0.78 }}>Wind</div>
-                                        <div style={{ marginTop: 5, fontSize: 13, fontWeight: 700 }}>{Math.round(weather.wind_speed_10m)}</div>
-                                        <div style={{ fontSize: 8.5, opacity: 0.74 }}>km/h</div>
-                                    </div>
-                                    <div style={{ padding: "8px 9px", borderRadius: 12, background: "rgba(255,255,255,0.12)", backdropFilter: "blur(10px)", border: `1px solid ${scene.line}` }}>
-                                        <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 7.5, letterSpacing: 1, textTransform: "uppercase", opacity: 0.78 }}>Light</div>
-                                        <div style={{ marginTop: 5, fontSize: 13, fontWeight: 700 }}>{weather.is_day ? "Day" : "Night"}</div>
-                                    </div>
-                                </div>
-                            </>
+                                    </button>
+                                ))}
+                            </div>
                         )}
                     </div>
-                </div>
 
-                <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 0.5, opacity: 0.76 }}>
-                    Live background adapts to current conditions · Open-Meteo
+                    {fetching && <div style={{ fontSize: 11, color: `${toneText}cc`, fontFamily: "'JetBrains Mono'" }}>Fetching live sky…</div>}
+                    {err && <div style={{ fontSize: 11, color: "#fee2e2" }}>{err}</div>}
+
+                    {weather && !fetching && (
+                        <>
+                            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                                <div>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 8, letterSpacing: 1.3, textTransform: "uppercase", opacity: 0.88 }}>{scene.label}</div>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
+                                        <span style={{ fontSize: 38, lineHeight: 1, filter: "drop-shadow(0 4px 10px rgba(0,0,0,0.18))" }}>{icon}</span>
+                                        <div>
+                                            <div style={{ fontSize: 32, fontWeight: 700, lineHeight: 1, fontFamily: "'JetBrains Mono'" }}>{Math.round(weather.temperature_2m)}°</div>
+                                            <div style={{ fontSize: 10, marginTop: 3, opacity: 0.84 }}>Feels like {Math.round(weather.apparent_temperature)}°</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style={{ minWidth: 106, maxWidth: 120, padding: "8px 10px", borderRadius: 14, background: "rgba(255,255,255,0.12)", backdropFilter: "blur(10px)", border: `1px solid ${scene.line}` }}>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 7.5, letterSpacing: 1.2, textTransform: "uppercase", opacity: 0.8 }}>Condition</div>
+                                    <div style={{ marginTop: 4, fontSize: 11, lineHeight: 1.35, wordBreak: "break-word" }}>{desc}</div>
+                                </div>
+                            </div>
+
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                                <div style={{ padding: "8px 9px", borderRadius: 12, background: "rgba(255,255,255,0.12)", backdropFilter: "blur(10px)", border: `1px solid ${scene.line}` }}>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 7.5, letterSpacing: 1, textTransform: "uppercase", opacity: 0.78 }}>Humidity</div>
+                                    <div style={{ marginTop: 5, fontSize: 13, fontWeight: 700 }}>{weather.relative_humidity_2m}%</div>
+                                </div>
+                                <div style={{ padding: "8px 9px", borderRadius: 12, background: "rgba(255,255,255,0.12)", backdropFilter: "blur(10px)", border: `1px solid ${scene.line}` }}>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 7.5, letterSpacing: 1, textTransform: "uppercase", opacity: 0.78 }}>Wind</div>
+                                    <div style={{ marginTop: 5, fontSize: 13, fontWeight: 700 }}>{Math.round(weather.wind_speed_10m)}</div>
+                                    <div style={{ fontSize: 8.5, opacity: 0.74 }}>km/h</div>
+                                </div>
+                                <div style={{ padding: "8px 9px", borderRadius: 12, background: "rgba(255,255,255,0.12)", backdropFilter: "blur(10px)", border: `1px solid ${scene.line}` }}>
+                                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 7.5, letterSpacing: 1, textTransform: "uppercase", opacity: 0.78 }}>Light</div>
+                                    <div style={{ marginTop: 5, fontSize: 13, fontWeight: 700 }}>{weather.is_day ? "Day" : "Night"}</div>
+                                </div>
+                            </div>
+                        </>
+                    )}
                 </div>
             </div>
         </Panel>
