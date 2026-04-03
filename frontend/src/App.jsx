@@ -58,19 +58,32 @@ export default function App() {
     const canvasRef = useRef(null);
     const headerRef = useRef(null);
     const [canvasBounds, setCanvasBounds] = useState({ width: 0, height: 0 });
-    const [headerLockY, setHeaderLockY] = useState(0);
+    const [headerLockY, setHeaderLockY] = useState(180);
     useEffect(() => {
         if (!canvasRef.current) return;
         setCanvasBounds({ width: canvasRef.current.clientWidth, height: canvasRef.current.clientHeight });
         const ro = new ResizeObserver(entries => setCanvasBounds({ width: entries[0].contentRect.width, height: entries[0].contentRect.height }));
         ro.observe(canvasRef.current);
-        return () => ro.disconnect();
+        return () => {
+            ro.disconnect();
+            window.removeEventListener("resize", measureHeaderLock);
+        };
     }, []);
     useEffect(() => {
-        if (!headerRef.current) return;
-        setHeaderLockY(headerRef.current.getBoundingClientRect().height + 8);
-        const ro = new ResizeObserver(entries => setHeaderLockY(entries[0].contentRect.height + 8));
+        if (!headerRef.current || !canvasRef.current) return;
+        const measureHeaderLock = () => {
+            if (!headerRef.current || !canvasRef.current) return;
+            const headerRect = headerRef.current.getBoundingClientRect();
+            const canvasRect = canvasRef.current.getBoundingClientRect();
+            const canvasRelativeBottom = headerRect.bottom - canvasRect.top;
+            setHeaderLockY(Math.ceil(canvasRelativeBottom) + 16);
+        };
+
+        measureHeaderLock();
+        const ro = new ResizeObserver(() => measureHeaderLock());
         ro.observe(headerRef.current);
+        ro.observe(canvasRef.current);
+        window.addEventListener("resize", measureHeaderLock);
         return () => ro.disconnect();
     }, []);
     const [companionNow, setCompanionNow] = useState(Date.now());
