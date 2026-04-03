@@ -6,21 +6,23 @@ export const WidgetRegistryCtx = createContext(null);
 
 const SNAP_GRID = 20;
 const SNAP_EDGE_THRESHOLD = 18;
+const TOP_SAFE_GAP = 18;
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
 function getBoundsMetrics(bounds, el, minY) {
+    const safeMinY = Math.max(0, minY + TOP_SAFE_GAP);
     const fallbackWidth = typeof window !== "undefined" ? window.innerWidth : 0;
-    const fallbackHeight = typeof window !== "undefined" ? window.innerHeight : minY;
+    const fallbackHeight = typeof window !== "undefined" ? window.innerHeight : safeMinY;
     const width = bounds?.width || fallbackWidth;
     const height = bounds?.height || fallbackHeight;
     const w = el?.offsetWidth || 0;
     const h = el?.offsetHeight || 0;
     return {
         minX: 0,
-        minY,
+        minY: safeMinY,
         maxX: Math.max(0, width - w),
-        maxY: Math.max(minY, height - h),
+        maxY: Math.max(safeMinY, height - h),
         width: w,
         height: h,
     };
@@ -141,7 +143,10 @@ export function useDraggable(ix, iy) {
     const idRef = useRef(`w_${Math.random().toString(36).slice(2)}`);
     useEffect(() => { minYRef.current = minY; }, [minY]);
     useEffect(() => { boundsRef.current = bounds; }, [bounds]);
-    const [pos, setPos] = useState({ x: ix, y: Math.max(minY, iy) });
+    const [pos, setPos] = useState(() => {
+        const initialY = Math.max(minY + TOP_SAFE_GAP, iy);
+        return { x: ix, y: initialY };
+    });
     const dr = useRef(false);
     const off = useRef({ x: 0, y: 0 });
     const moveHandlerRef = useRef(null);

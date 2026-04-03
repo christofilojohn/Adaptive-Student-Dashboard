@@ -2,10 +2,12 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { DragBoundsCtx, HeaderLockCtx, WidgetRegistryCtx } from "./dashboard/drag";
 import { DEFAULT_AMBIENT, LLM_CONFIG, MODULE_COLORS, POSTIT_CHAR_LIMIT } from "./dashboard/constants";
 import { callAmbientLLM, callLLM } from "./dashboard/llm";
+import { analyzeAdaptiveState } from "./dashboard/adaptive";
 import { deriveCompanionView, evolveCompanionState } from "./dashboard/companion";
 import { inferMood, toLocalDateStr } from "./dashboard/utils";
 import { clearProfile, clearStoredSessionToken, fetchProfiles, loginProfile, logoutProfile, restoreSession, saveProfileState } from "./dashboard/profileApi";
 import { createDefaultDashboardState, getNextGeneratedIdStart, normalizeDashboardState } from "./dashboard/profileState";
+import { AdaptivePanel } from "./dashboard/components/adaptivePanel";
 import { BudgetPanel } from "./dashboard/components/budgetPanel";
 import { CalendarPanel } from "./dashboard/components/calendarPanel";
 import { PostIt, TimerWidget, ClockWidget, QuoteWidget } from "./dashboard/components/floatingWidgets";
@@ -22,7 +24,9 @@ export default function App() {
     const [accent, setAccent] = useState(initialState.accent);
     const [ambient, setAmbient] = useState(initialState.ambient);
     const [showTasks, setShowTasks] = useState(initialState.showTasks), [showCal, setShowCal] = useState(initialState.showCal), [showBudget, setShowBudget] = useState(initialState.showBudget), [showRewards, setShowRewards] = useState(initialState.showRewards), [showWeather, setShowWeather] = useState(initialState.showWeather);
+    const [showAdaptive, setShowAdaptive] = useState(initialState.showAdaptive);
     const [showTCDModules, setShowTCDModules] = useState(initialState.showTCDModules), [showTimetable, setShowTimetable] = useState(initialState.showTimetable);
+    const [autoAdapt, setAutoAdapt] = useState(initialState.autoAdapt);
     const [modules, setModules] = useState(initialState.modules);
     const [timetable, setTimetable] = useState(initialState.timetable);
     const [tcdDegree, setTcdDegree] = useState(initialState.tcdDegree);
@@ -48,6 +52,7 @@ export default function App() {
     const [profileNameInput, setProfileNameInput] = useState("");
 
     const scrollRef = useRef(null), inputRef = useRef(null), idRef = useRef(300), ambientTimerRef = useRef(null);
+    const lastAutoModeRef = useRef(null);
     const widgetRegistry = useRef(new Map());
     const canvasRef = useRef(null);
     const headerRef = useRef(null);
@@ -91,8 +96,10 @@ export default function App() {
         setShowBudget(next.showBudget);
         setShowRewards(next.showRewards);
         setShowWeather(next.showWeather);
+        setShowAdaptive(next.showAdaptive);
         setShowTCDModules(next.showTCDModules);
         setShowTimetable(next.showTimetable);
+        setAutoAdapt(next.autoAdapt);
         setModules(next.modules);
         setTimetable(next.timetable);
         setTcdDegree(next.tcdDegree);
@@ -125,8 +132,10 @@ export default function App() {
         showBudget,
         showRewards,
         showWeather,
+        showAdaptive,
         showTCDModules,
         showTimetable,
+        autoAdapt,
         modules,
         timetable,
         tcdDegree,
@@ -142,7 +151,7 @@ export default function App() {
         lennyMood,
         companion,
         msgs,
-    }), [accent, ambient, bg, budget, companion, events, expenses, greeting, lennyMood, modules, msgs, postits, showBudget, showCal, showRewards, showTCDModules, showTasks, showTimetable, showWeather, tasks, tcdDegree, timetable, timers, weeklyGoalCategory, weeklyGoalTarget, widgets]);
+    }), [accent, ambient, autoAdapt, bg, budget, companion, events, expenses, greeting, lennyMood, modules, msgs, postits, showAdaptive, showBudget, showCal, showRewards, showTCDModules, showTasks, showTimetable, showWeather, tasks, tcdDegree, timetable, timers, weeklyGoalCategory, weeklyGoalTarget, widgets]);
 
     const loadProfileDirectory = useCallback(async () => {
         try {
@@ -186,13 +195,14 @@ export default function App() {
                 setProfileNameInput(payload.profile.displayName);
                 setProfileStatus("ready");
                 setAuthMessage("");
-        } catch (error) {
-            if (!cancelled) {
-                if (error && /unauthorized|401/i.test(error.message)) {
-                    resetProfileShell("Saved session expired. Sign in again.");
-                } else {
-                    setProfileStatus("logged_out");
-                    setAuthMessage("Could not reach the server. Please try again.");
+            } catch (error) {
+                if (!cancelled) {
+                    if (error && /unauthorized|401/i.test(error.message)) {
+                        resetProfileShell("Saved session expired. Sign in again.");
+                    } else {
+                        setProfileStatus("logged_out");
+                        setAuthMessage("Could not reach the server. Please try again.");
+                    }
                 }
             }
         })();
@@ -222,14 +232,50 @@ export default function App() {
         return () => clearTimeout(timer);
     }, [buildProfileState, profileStatus, resetProfileShell, session]);
 
-    const themes = {
-        cozy: { bg: "linear-gradient(135deg, #2d1b14 0%, #1a1410 50%, #0d0a07 100%)", accent: "#e17055" },
-        focus: { bg: "#0a0a12", accent: "#636e72" }, ocean: { bg: "linear-gradient(135deg, #0c1829 0%, #0a2a3f 40%, #134e5e 100%)", accent: "#00cec9" },
-        sunset: { bg: "linear-gradient(135deg, #1a0a2e 0%, #3d1c56 30%, #c0392b 70%, #e67e22 100%)", accent: "#e67e22" },
-        forest: { bg: "linear-gradient(135deg, #0a1a0a 0%, #1a2f1a 50%, #0d1f0d 100%)", accent: "#00b894" },
-        midnight: { bg: "linear-gradient(135deg, #020111 0%, #0a0a2e 50%, #060620 100%)", accent: "#6c5ce7" },
-        minimal: { bg: "#f5f0eb", accent: "#2d3436" },
-    };
+    const themes = useMemo(() => ({
+        cozy: {
+            bg: "linear-gradient(135deg, #2d1b14 0%, #1a1410 50%, #0d0a07 100%)",
+            accent: "#e17055",
+            mood: "cozy",
+            ambient: { glowColor: "#ffb38b", glowIntensity: 0.24, grainOpacity: 0.04, panelBlur: 22, panelOpacity: 0.07, borderWarmth: 0.8, particles: "fireflies" },
+        },
+        focus: {
+            bg: "#0a0a12",
+            accent: "#6366f1",
+            mood: "focus",
+            ambient: { glowColor: "#9eb3ff", glowIntensity: 0.16, grainOpacity: 0.018, panelBlur: 18, panelOpacity: 0.045, borderWarmth: 0.12, particles: "stars" },
+        },
+        ocean: {
+            bg: "linear-gradient(135deg, #0c1829 0%, #0a2a3f 40%, #134e5e 100%)",
+            accent: "#00cec9",
+            mood: "ocean",
+            ambient: { glowColor: "#67e8f9", glowIntensity: 0.18, grainOpacity: 0.025, panelBlur: 20, panelOpacity: 0.05, borderWarmth: 0.2, particles: "sparkle" },
+        },
+        sunset: {
+            bg: "linear-gradient(135deg, #1a0a2e 0%, #3d1c56 30%, #c0392b 70%, #e67e22 100%)",
+            accent: "#e67e22",
+            mood: "sunset",
+            ambient: { glowColor: "#fdba74", glowIntensity: 0.22, grainOpacity: 0.03, panelBlur: 22, panelOpacity: 0.055, borderWarmth: 0.58, particles: "sparkle" },
+        },
+        forest: {
+            bg: "linear-gradient(135deg, #0a1a0a 0%, #1a2f1a 50%, #0d1f0d 100%)",
+            accent: "#00b894",
+            mood: "nature",
+            ambient: { glowColor: "#86efac", glowIntensity: 0.18, grainOpacity: 0.03, panelBlur: 20, panelOpacity: 0.05, borderWarmth: 0.34, particles: "fireflies" },
+        },
+        midnight: {
+            bg: "linear-gradient(135deg, #020111 0%, #0a0a2e 50%, #060620 100%)",
+            accent: "#6c5ce7",
+            mood: "mysterious",
+            ambient: { glowColor: "#818cf8", glowIntensity: 0.12, grainOpacity: 0.02, panelBlur: 20, panelOpacity: 0.045, borderWarmth: 0.14, particles: "stars" },
+        },
+        minimal: {
+            bg: "#f5f0eb",
+            accent: "#2d3436",
+            mood: "calm",
+            ambient: { glowColor: "#cbd5e1", glowIntensity: 0.08, grainOpacity: 0.012, panelBlur: 16, panelOpacity: 0.025, borderWarmth: 0.08, particles: "none" },
+        },
+    }), []);
 
     const noteCompanion = useCallback((event) => {
         setCompanion(prev => evolveCompanionState(prev, event));
@@ -239,6 +285,32 @@ export default function App() {
         if (!mood) return;
         setLennyMood(mood);
     }, []);
+
+    const applyThemePreset = useCallback((themeKey, options = {}) => {
+        const preset = themes[themeKey];
+        if (!preset) return;
+
+        setBg(preset.bg);
+        setAccent(preset.accent);
+        setAmbient(prev => ({
+            ...prev,
+            ...preset.ambient,
+            mood: preset.mood,
+        }));
+
+        if (options.greetingText) setGreeting(options.greetingText);
+        if (preset.mood) {
+            setMoodWithCompanion(preset.mood, options.reason || "adaptive_theme");
+            if (options.noteCompanion !== false) noteCompanion({ type: "ambient_shift", mood: preset.mood });
+        }
+    }, [noteCompanion, setMoodWithCompanion, themes]);
+
+    const startAdaptiveSprint = useCallback((taskText) => {
+        const label = taskText ? `Focus: ${taskText}` : "Adaptive sprint";
+        setTimers(current => [...current, { id: gid(), minutes: 45, label: label.length > 32 ? `${label.slice(0, 29)}...` : label }]);
+        noteCompanion({ type: "timer_started", userText: taskText || "Adaptive sprint", mood: "focus" });
+        setMoodWithCompanion("focus", "timer_started");
+    }, [noteCompanion, setMoodWithCompanion]);
 
     const snap = () => ({
         tasks: tasks.slice(0, 10).map(t => t.text + (t.done ? " ✓" : "")),
@@ -321,13 +393,8 @@ export default function App() {
                 } else console.warn("[exec] add_timer skipped: invalid minutes:", a.minutes);
             }
             else if (t === "change_theme" && themes[a.theme]) {
-                setBg(themes[a.theme].bg);
-                setAccent(themes[a.theme].accent);
-                const themeMood = inferMood(a.theme, []) || (a.theme === "minimal" ? "calm" : a.theme === "forest" ? "nature" : a.theme === "midnight" ? "mysterious" : null);
-                if (themeMood) {
-                    noteCompanion({ type: "ambient_shift", mood: themeMood });
-                    setMoodWithCompanion(themeMood, "ambient_shift");
-                }
+                setAutoAdapt(false);
+                applyThemePreset(a.theme, { reason: "manual_theme" });
             }
             else if (t === "set_greeting" && a.text) setGreeting(a.text);
             else if (t === "add_widget" && a.widgetType) setWidgets(p => [...p, { id: gid(), type: a.widgetType }]);
@@ -434,6 +501,7 @@ export default function App() {
         { k: "b", l: "Budget", s: showBudget, f: setShowBudget, i: "💰" },
         { k: "r", l: "Rewards", s: showRewards, f: setShowRewards, i: "⭐" },
         { k: "w", l: "Weather", s: showWeather, f: setShowWeather, i: "🌤️" },
+        { k: "a", l: "Adaptive", s: showAdaptive, f: setShowAdaptive, i: "🧠" },
         { k: "m", l: "Modules", s: showTCDModules, f: setShowTCDModules, i: "🎓" },
         { k: "tt", l: "Timetable", s: showTimetable, f: setShowTimetable, i: "📆" },
     ];
@@ -455,7 +523,16 @@ export default function App() {
     const weeklyGoalRemaining = Math.max(weeklyGoalTarget - weeklyGoalProgress, 0);
     const weeklyGoalHelper = weeklyGoalMet ? "Reward unlocked" : weeklyGoalRemaining === 1 ? `1 ${activeWeeklyGoal.unit} left` : `${weeklyGoalRemaining} ${activeWeeklyGoal.unit}s left`;
     const totalModuleCredits = modules.reduce((s, m) => s + (m.credits || 5), 0);
+    const adaptiveInsights = useMemo(() => analyzeAdaptiveState({
+        tasks,
+        events,
+        expenses,
+        budget,
+        modules,
+        now: companionNow,
+    }), [budget, companionNow, events, expenses, modules, tasks]);
     const statCards = [
+        { label: "Pressure", value: adaptiveInsights.pressureLabel, helper: adaptiveInsights.suggestedMode === "minimal" ? "Reduce noise" : "Adaptive signal" },
         { label: "Active tasks", value: activeTasks, helper: activeTasks <= 2 ? "On track" : "Busy week" },
         { label: "Upcoming events", value: upcomingEvents, helper: upcomingEvents > 0 ? "Plan ahead" : "Clear calendar" },
         { label: "Budget used", value: `${budgetProgress}%`, helper: budgetProgress >= 70 ? "Watch spend" : "On track" },
@@ -473,19 +550,7 @@ export default function App() {
 
     const safeAmbientGlowColor = (ambient.glowColor && ambient.glowColor !== "transparent") ? ambient.glowColor : "#ffffff";
     const ambientBg = ambient.glowIntensity > 0 ? `radial-gradient(ellipse at 30% 40%, ${safeAmbientGlowColor}${Math.round(ambient.glowIntensity * 255).toString(16).padStart(2, "0")} 0%, transparent 70%)` : "none";
-
-    const adaptiveStatusMap = {
-        focus: "Focus mode active",
-        cozy: "Cozy study mode",
-        ocean: "Fresh start mode",
-        sunset: "High energy mode",
-        forest: "Balanced week mode",
-        midnight: "Deep work mode",
-        minimal: "Low distraction mode",
-        neutral: "Planning mode active",
-    };
-
-    const adaptiveStatus = adaptiveStatusMap[ambient.mood] || "Planning mode active";
+    const adaptiveStatus = autoAdapt ? adaptiveInsights.summary : "Manual mode pinned";
     const companionView = useMemo(() => deriveCompanionView({
         companion,
         baseMood: lennyMood,
@@ -499,6 +564,20 @@ export default function App() {
         loading,
         now: companionNow,
     }), [activeTasks, ambient.mood, budgetProgress, companion, companionNow, completedTasks, lennyMood, loading, postits.length, timers.length, upcomingEvents]);
+
+    useEffect(() => {
+        if (!autoAdapt) {
+            lastAutoModeRef.current = null;
+            return;
+        }
+        if (!adaptiveInsights?.suggestedMode || lastAutoModeRef.current === adaptiveInsights.suggestedMode) return;
+
+        applyThemePreset(adaptiveInsights.suggestedMode, {
+            greetingText: adaptiveInsights.suggestedGreeting,
+            reason: "auto_adapt",
+        });
+        lastAutoModeRef.current = adaptiveInsights.suggestedMode;
+    }, [adaptiveInsights, applyThemePreset, autoAdapt]);
 
     const noteColors = ["#fef68a", "#ffd6a5", "#caffbf", "#bde0fe", "#e9d5ff"];
     const getNextPostitPosition = (count) => ({
@@ -673,22 +752,27 @@ export default function App() {
                             A calmer dashboard for modules, money, and weekly goals — with styling that reacts to how your week feels.
                         </div>
                         <div style={{ marginTop: 10 }}>
-                            <span style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 6,
-                                padding: "5px 10px",
-                                borderRadius: 999,
-                                background: light ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.05)",
-                                border: `1px solid ${accent}33`,
-                                color: accent,
-                                fontSize: 9.5,
-                                fontFamily: "'JetBrains Mono'",
-                                letterSpacing: 1,
-                                textTransform: "uppercase"
-                            }}>
-                                ✦ {adaptiveStatus}
-                            </span>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                                <span style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 6,
+                                    padding: "5px 10px",
+                                    borderRadius: 999,
+                                    background: light ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.05)",
+                                    border: `1px solid ${accent}33`,
+                                    color: accent,
+                                    fontSize: 9.5,
+                                    fontFamily: "'JetBrains Mono'",
+                                    letterSpacing: 1,
+                                    textTransform: "uppercase"
+                                }}>
+                                    ✦ {adaptiveStatus}
+                                </span>
+                                <span style={{ fontSize: 10.5, color: txm, lineHeight: 1.45 }}>
+                                    {adaptiveInsights.recommendedTask ? `Next best move: ${adaptiveInsights.recommendedTask.text}` : "Adaptive recommendations update as the dashboard changes."}
+                                </span>
+                            </div>
                         </div>
                         <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
                             {statCards.map((stat) => (
@@ -719,12 +803,14 @@ export default function App() {
                         </div>
                         <div style={{ display: "flex", gap: 5, flexWrap: "wrap", justifyContent: "flex-end", maxWidth: 260 }}>
                             {quickThemes.map((themeOption) => {
-                                //const isActiveTheme = themeOption.key === ambient.mood;
-                                const isActiveTheme = themeOption.key === ambient.mood;
+                                const isActiveTheme = bg === themes[themeOption.key].bg && accent === themes[themeOption.key].accent;
                                 return (
                                     <button
                                         key={themeOption.key}
-                                        onClick={() => exec([{ type: "change_theme", theme: themeOption.key }])}
+                                        onClick={() => {
+                                            setAutoAdapt(false);
+                                            applyThemePreset(themeOption.key, { reason: "manual_theme" });
+                                        }}
                                         style={{
                                             padding: isActiveTheme ? "5px 11px" : "5px 10px",
                                             borderRadius: 999,
@@ -744,15 +830,22 @@ export default function App() {
                                 );
                             })}
                         </div>
+                        <div style={{ fontSize: 9.5, color: txm, fontFamily: "'JetBrains Mono'", textAlign: "right", maxWidth: 320 }}>
+                            {autoAdapt ? `Auto-adapt is on: ${adaptiveInsights.suggestedMode} mode is currently recommended.` : "Manual mode is pinned. Re-enable auto-adapt from the Adaptive panel."}
+                        </div>
                     </div>
                 </div>
 
                 <HeaderLockCtx.Provider value={headerLockY}>
-                {showTasks && <TasksPanel tasks={tasks} onToggle={toggleTask} onEditTask={(id, v) => setTasks(t => t.map(tk => tk.id === id ? { ...tk, text: v } : tk))} onRequestSplit={t => send(`split the task "${t}" into subtasks`)} onAddTask={manualAddTask} accent={accent} light={light} onClose={() => setShowTasks(false)} ambient={ambient} />}
+                {showTasks && <TasksPanel tasks={tasks} recommendedTaskId={adaptiveInsights.recommendedTask?.id} recommendedTaskReason={adaptiveInsights.recommendedTask?.reason} onToggle={toggleTask} onEditTask={(id, v) => setTasks(t => t.map(tk => tk.id === id ? { ...tk, text: v } : tk))} onRequestSplit={t => send(`split the task "${t}" into subtasks`)} onAddTask={manualAddTask} accent={accent} light={light} onClose={() => setShowTasks(false)} ambient={ambient} />}
                 {showCal && <CalendarPanel events={events} onDeleteEvent={id => setEvents(e => e.filter(ev => ev.id !== id))} onAddEvent={manualAddEvent} onEditEvent={manualEditEvent} accent={accent} light={light} onClose={() => setShowCal(false)} ambient={ambient} />}
                 {showBudget && <BudgetPanel expenses={expenses} budget={budget} accent={accent} light={light} onClose={() => setShowBudget(false)} onDeleteExpense={id => setExpenses(e => e.filter(ex => ex.id !== id))} onAddExpense={manualAddExpense} ambient={ambient} />}
                 {showRewards && <RewardsPanel weeklyGoalCategory={weeklyGoalCategory} setWeeklyGoalCategory={setWeeklyGoalCategory} weeklyGoalTarget={weeklyGoalTarget} setWeeklyGoalTarget={setWeeklyGoalTarget} weeklyGoalProgress={weeklyGoalProgress} weeklyGoalLabel={activeWeeklyGoal.label} weeklyGoalHelper={weeklyGoalHelper} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" />}
                 {showWeather && <WeatherWidget light={light} accent={accent} ambient={ambient} onClose={() => setShowWeather(false)} />}
+                {showAdaptive && <AdaptivePanel analysis={adaptiveInsights} autoAdapt={autoAdapt} onToggleAutoAdapt={() => setAutoAdapt(value => !value)} onApplySuggestedMode={() => {
+                    setAutoAdapt(false);
+                    applyThemePreset(adaptiveInsights.suggestedMode, { greetingText: adaptiveInsights.suggestedGreeting, reason: "manual_adaptive_mode" });
+                }} onStartSprint={() => startAdaptiveSprint(adaptiveInsights.recommendedTask?.text)} accent={accent} light={light} ambient={ambient} onClose={() => setShowAdaptive(false)} />}
                 {showTCDModules && <TCDModulesPanel modules={modules} tcdDegree={tcdDegree} onSetDegree={setTcdDegree} onAddModule={m => setModules(p => p.some(x => x.code === m.code) ? p : [...p, m])} onRemoveModule={id => setModules(p => p.filter(m => m.id !== id))} accent={accent} light={light} onClose={() => setShowTCDModules(false)} ambient={ambient} />}
                 {showTimetable && <TimetablePanel modules={modules} timetable={timetable} onAddSlot={s => setTimetable(p => [...p, s])} onRemoveSlot={id => setTimetable(p => p.filter(s => s.id !== id))} accent={accent} light={light} onClose={() => setShowTimetable(false)} ambient={ambient} />}
 
@@ -810,7 +903,7 @@ export default function App() {
                 {timers.map(t => <TimerWidget key={t.id} id={t.id} minutes={t.minutes} label={t.label} onRemove={id => setTimers(tt => tt.filter(n => n.id !== id))} light={light} />)}
                 {widgets.map(w => w.type === "clock" ? <ClockWidget key={w.id} id={w.id} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} light={light} /> : w.type === "quote" ? <QuoteWidget key={w.id} id={w.id} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} light={light} /> : null)}
 
-                {!postits.length && !timers.length && !widgets.length && !showTasks && !showCal && !showBudget && !showRewards && !showWeather && !showTCDModules && !showTimetable && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", color: txs, userSelect: "none", zIndex: 5 }}>
+                {!postits.length && !timers.length && !widgets.length && !showTasks && !showCal && !showBudget && !showRewards && !showWeather && !showAdaptive && !showTCDModules && !showTimetable && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", color: txs, userSelect: "none", zIndex: 5 }}>
                     <div style={{ fontSize: 40, marginBottom: 8 }}>✦</div><div style={{ fontFamily: "'JetBrains Mono'", fontSize: 10, letterSpacing: 2 }}>YOUR STUDENT DASHBOARD IS CLEAR</div><div style={{ marginTop: 8, fontSize: 11, color: txm }}>Turn panels back on or ask the copilot to add something.</div>
                 </div>}
                 </HeaderLockCtx.Provider>
