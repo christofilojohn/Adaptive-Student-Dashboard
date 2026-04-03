@@ -64,10 +64,7 @@ export default function App() {
         setCanvasBounds({ width: canvasRef.current.clientWidth, height: canvasRef.current.clientHeight });
         const ro = new ResizeObserver(entries => setCanvasBounds({ width: entries[0].contentRect.width, height: entries[0].contentRect.height }));
         ro.observe(canvasRef.current);
-        return () => {
-            ro.disconnect();
-            window.removeEventListener("resize", measureHeaderLock);
-        };
+        return () => ro.disconnect();
     }, []);
     useEffect(() => {
         if (!headerRef.current || !canvasRef.current) return;
@@ -84,7 +81,10 @@ export default function App() {
         ro.observe(headerRef.current);
         ro.observe(canvasRef.current);
         window.addEventListener("resize", measureHeaderLock);
-        return () => ro.disconnect();
+        return () => {
+            ro.disconnect();
+            window.removeEventListener("resize", measureHeaderLock);
+        };
     }, []);
     const [companionNow, setCompanionNow] = useState(Date.now());
     useEffect(() => {
