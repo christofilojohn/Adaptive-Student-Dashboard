@@ -185,6 +185,155 @@ environment:
   - MODEL_PATH=/models/your-model.gguf
 ```
 
+## Gmail Task Sync (Optional)
+
+You can sync recent Gmail messages into dashboard tasks using Zhipu AI extraction.
+
+1. Copy env template and set credentials:
+```bash
+cp .env.example .env
+```
+
+2. In `.env`, configure:
+- `ZHIPU_API_KEY` (required)
+- Gmail auth via either:
+  - `GMAIL_ACCESS_TOKEN`, or
+  - `GMAIL_CLIENT_ID` + `GMAIL_CLIENT_SECRET` + `GMAIL_REFRESH_TOKEN`
+
+3. Start the app with `./start.sh`, then use:
+- Quick action: `sync gmail tasks`
+- Quick action: `show gmail emails`
+- Or chat: `sync gmail tasks`
+- Or chat: `show gmail emails`
+
+The frontend calls `POST /search/gmail-tasks-sync` on the local backend, then adds extracted tasks to your list.
+It can also call `POST /search/gmail-emails` to render a Gmail inbox panel on the dashboard.
+Clicking an email can call `POST /search/gmail-email-detail` to show full message detail (subject/from/to/body).
+If the email contains HTML content, the dashboard renders a sanitized HTML version in the detail pane.
+`/search/gmail-tasks-sync` now uses a GLM second pass to score task priority (`high|medium|low`) with `priorityScore` and `priorityReason`.
+`/search/gmail-emails` and `/search/gmail-email-detail` are cached locally in SQLite (`gmail_cache`) to reduce repeated Gmail API calls.
+Use `{ "forceRefresh": true }` in those requests to bypass cache when needed.
+
+## GLM Email Understanding (Detailed)
+
+The dashboard now supports an adaptive Gmail workflow that can understand incoming emails and convert them into actionable dashboard items.
+
+### 1) Automatic email-to-task extraction
+
+When you run Gmail sync (`POST /search/gmail-tasks-sync`, or UI command `sync gmail tasks`):
+- The backend reads recent emails from Gmail.
+- GLM extracts task candidates from message content.
+- Each task receives:
+  - `priority` (`high|medium|low`)
+  - `priorityScore`
+  - `priorityReason`
+- New tasks are inserted into the Tasks list automatically.
+- Duplicate protection is applied using `sourceEmailId + normalized task text`.
+
+This means assignment/deadline emails can be recognized and converted into tasks without manual rewriting.
+
+### 2) Bill recognition and budget insertion
+
+Billing/payment emails can be converted into Budget items through the Gmail panel flow:
+- Drag an email card into the **Budget** panel.
+- The frontend calls `POST /search/gmail-email-to-expense`.
+- GLM classifies whether the email is a bill/payment and extracts:
+  - `description`
+  - `amount`
+  - `category`
+- If the email is bill-like and amount is valid, an expense is added automatically.
+- If it is not a valid bill/payment email, the conversion is skipped safely.
+- Duplicate protection is applied using `sourceEmailId + description + amount`.
+
+### 3) Test email generation (randomized each run)
+
+The Gmail panel includes a **Generate tests** button (next to **Refresh**):
+- Calls `POST /search/gmail-generate-sample-emails`
+- Uses GLM to generate realistic randomized test emails:
+  - `assignment`
+  - `meeting`
+  - `bill`
+- Subjects/body details vary per run
+- Inbox refreshes automatically after sending
+
+This lets you quickly verify the task extraction and budget conversion pipeline.
+
+### 4) Scrutability (Adaptive Inspector audit trail)
+
+All key conversion actions are logged in **Adaptive Inspector**:
+- email converted to task
+- email converted to budget expense
+- duplicate skipped
+- conversion failure
+
+Logs include evidence fields such as email subject/id, detected priority or amount/category, and model reasoning where available.
+
+### Required Gmail scopes for this flow
+
+For full inbox + send + conversion testing, include:
+- `https://www.googleapis.com/auth/gmail.readonly`
+- `https://www.googleapis.com/auth/gmail.send` (or `gmail.modify`)
+
+Recommended env for test generation target:
+- `GMAIL_TEST_TO=you@example.com`
+
+If `GMAIL_TEST_TO` is not set, the backend attempts to resolve your Gmail profile address.
+
+## Run Locally (Frontend + Search Backend)
+
+Use this flow when you want to run and test Gmail adaptive features directly.
+
+1. Create env file:
+```bash
+cp .env.example .env
+```
+
+2. In `.env`, set at least:
+- `ZHIPU_API_KEY`
+- `GMAIL_CLIENT_ID`
+- `GMAIL_CLIENT_SECRET`
+- `GMAIL_REFRESH_TOKEN`
+- `GMAIL_TEST_TO` (recommended for Generate tests)
+
+3. Start search backend (Terminal A):
+```bash
+cd /path/to/Adaptive-Student-Dashboard
+node backend/search-server.mjs
+```
+
+4. Start frontend (Terminal B):
+```bash
+cd /path/to/Adaptive-Student-Dashboard/frontend
+npm install
+npm run dev
+```
+
+5. Open:
+- `http://localhost:5173`
+
+6. Validate the feature:
+- Open **Gmail** panel
+- Click **Generate tests** to create randomized assignment/meeting/bill emails
+- Run `sync gmail tasks` (or use the quick action) to auto-add extracted tasks
+- Drag a generated bill email to **Budget** to auto-add an expense
+- Check **Adaptive Inspector** for conversion logs
+
+## Local File Database (SQLite)
+
+The dashboard now supports local state persistence in a file-based SQLite database:
+
+- Default file: `./data/dashboard.sqlite`
+- Backend endpoints:
+  - `POST /search/dashboard-state-load`
+  - `POST /search/dashboard-state-save`
+
+You can override path/limits in `.env`:
+
+- `DASHBOARD_DB_PATH`
+- `DASHBOARD_DB_DIR`
+- `SEARCH_MAX_BODY_BYTES`
+- `DASHBOARD_STATE_MAX_BYTES`
+
 ## Troubleshooting
 
 **LLM not responding:**
