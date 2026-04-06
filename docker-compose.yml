@@ -85,17 +85,17 @@ services:
       sh -c '
         MODEL=/models/Phi-3.5-mini-instruct-Q4_K_M.gguf
         SHA=e4165e3a71af97f1b4820da61079826d8752a2088e313af0c7d346796c38eff5
-        if [ -f "$MODEL" ]; then
+        if [ -f "$$MODEL" ]; then
           echo "Model already exists — verifying integrity..."
-          if echo "$SHA  $MODEL" | sha256sum -c - > /dev/null 2>&1; then
+          if echo "$$SHA  $$MODEL" | sha256sum -c - > /dev/null 2>&1; then
             echo "Integrity OK, skipping download."
             exit 0
           fi
           echo "Integrity check failed — re-downloading..."
-          rm -f "$MODEL"
+          rm -f "$$MODEL"
         fi
-        curl -fSL "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf" -o "$MODEL" &&
-        echo "$SHA  $MODEL" | sha256sum -c - ||
-          { rm -f "$MODEL"; echo "SHA256 mismatch — corrupt file removed"; exit 1; }
+        curl -fSL "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf" -o "$$MODEL" &&
+        echo "$$SHA  $$MODEL" | sha256sum -c - ||
+          { rm -f "$$MODEL"; echo "SHA256 mismatch — corrupt file removed"; exit 1; }
       '
     profiles: [download]
