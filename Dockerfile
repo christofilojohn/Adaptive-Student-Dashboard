@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /build
 # Pinned to a stable release for reproducible builds.
 # To upgrade: update the tag and verify the -fa flag behaviour is unchanged.
-RUN git clone --depth 1 --branch b4887 https://github.com/ggerganov/llama.cpp .
+RUN git clone --depth 1 https://github.com/ggerganov/llama.cpp .
 
 # Build flags per type
 ARG BUILD_TYPE=cuda

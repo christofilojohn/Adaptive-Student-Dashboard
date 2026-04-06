@@ -473,6 +473,7 @@ function useDraggable(ix, iy, {
     snapOnRelease = false,
     snapWhileDragging = false,
     gridSize = PANEL_GRID_SIZE,
+    onDragEnd = null,
 } = {}) {
     const minY = useContext(HeaderLockCtx);
     const minYRef = useRef(minY);
@@ -482,6 +483,21 @@ function useDraggable(ix, iy, {
     const posRef = useRef(pos);
     useEffect(() => { posRef.current = pos; }, [pos]);
     const dr = useRef(false), off = useRef({ x: 0, y: 0 });
+    const lastIncomingRef = useRef({ x: ix, y: iy });
+    useEffect(() => {
+        const nextX = Number(ix);
+        const nextY = Number(iy);
+        if (!Number.isFinite(nextX) || !Number.isFinite(nextY)) return;
+        const prevIncoming = lastIncomingRef.current;
+        if (prevIncoming.x === nextX && prevIncoming.y === nextY) return;
+        lastIncomingRef.current = { x: nextX, y: nextY };
+        if (dr.current) return;
+        setPos(cur => {
+            const target = { x: nextX, y: Math.max(minYRef.current, nextY) };
+            if (Math.abs(cur.x - target.x) < 1 && Math.abs(cur.y - target.y) < 1) return cur;
+            return target;
+        });
+    }, [ix, iy]);
     const onMouseDown = useCallback((e) => {
         if (e.target.closest("button, input, textarea, select, a, [data-nodrag]")) return;
         e.preventDefault(); dr.current = true; setIsDragging(true); off.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
@@ -518,6 +534,7 @@ function useDraggable(ix, iy, {
         const up = () => {
             dr.current = false;
             setIsDragging(false);
+            let finalPos = posRef.current;
             if (clampToMainStage && snapOnRelease) {
                 const stageWidth = Math.max(640, window.innerWidth - RIGHT_RAIL_WIDTH);
                 const columnXs = getPanelColumnXPositions(stageWidth, panelWidth);
@@ -528,14 +545,16 @@ function useDraggable(ix, iy, {
                 const snappedX = clamp(snapToNearestColumn(posRef.current.x, columnXs), minX, maxX);
                 const snappedY = clamp(snapToGrid(posRef.current.y, minTop, gridSize), minTop, maxY);
                 if (Math.abs(snappedX - posRef.current.x) > 1 || Math.abs(snappedY - posRef.current.y) > 1) {
-                    setPos({ x: snappedX, y: snappedY });
+                    finalPos = { x: snappedX, y: snappedY };
+                    setPos(finalPos);
                 }
             }
+            if (typeof onDragEnd === "function") onDragEnd(finalPos);
             window.removeEventListener("mousemove", mv);
             window.removeEventListener("mouseup", up);
         };
         window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
-    }, [clampToMainStage, gridSize, panelWidth, pos.x, pos.y, snapOnRelease, snapWhileDragging]);
+    }, [clampToMainStage, gridSize, onDragEnd, panelWidth, pos.x, pos.y, snapOnRelease, snapWhileDragging]);
     return { pos, posRef, setPos, onMouseDown, isDragging };
 }
 
@@ -743,7 +762,7 @@ function LennyBuddy({ mood, glowColor, light, loading }) {
 // ═══════════════════════════════════════════════════
 // COMPONENTS
 // ═══════════════════════════════════════════════════
-function Panel({ children, x, y, width, title, icon, onClose, ambient, light, accent = "#8b5cf6", overflow = "hidden", zIndex = 15 }) {
+function Panel({ children, x, y, width, title, icon, onClose, ambient, light, accent = "#8b5cf6", overflow = "hidden", zIndex = 15, onMove }) {
     const minY = useContext(HeaderLockCtx);
     const shellRef = useRef(null);
     const panelWidth = PANEL_FIXED_WIDTH;
@@ -753,6 +772,7 @@ function Panel({ children, x, y, width, title, icon, onClose, ambient, light, ac
         snapOnRelease: true,
         snapWhileDragging: true,
         gridSize: PANEL_GRID_SIZE,
+        onDragEnd: onMove,
     });
     const normalizeRafRef = useRef(0);
     const panelOrderRef = useRef(0);
@@ -889,8 +909,8 @@ function Panel({ children, x, y, width, title, icon, onClose, ambient, light, ac
     );
 }
 
-function PostIt({ id, content, color, initialX, initialY, onRemove, onEdit }) {
-    const { pos, onMouseDown } = useDraggable(initialX, initialY);
+function PostIt({ id, content, color, initialX, initialY, onRemove, onEdit, onMove }) {
+    const { pos, onMouseDown } = useDraggable(initialX, initialY, { onDragEnd: onMove });
     const rot = useRef((-3 + Math.random() * 6).toFixed(1));
     const em = guessEmoji(content);
     return (
@@ -908,9 +928,11 @@ function PostIt({ id, content, color, initialX, initialY, onRemove, onEdit }) {
     );
 }
 
-function TimerWidget({ id, minutes, label, onRemove, light }) {
+function TimerWidget({ id, minutes, label, initialX, initialY, onRemove, onMove, light }) {
     const [left, setLeft] = useState(minutes * 60), [run, setRun] = useState(true);
-    const { pos, onMouseDown } = useDraggable(420 + Math.random() * 150, 40 + Math.random() * 100);
+    const startX = Number.isFinite(Number(initialX)) ? Number(initialX) : (420 + Math.random() * 150);
+    const startY = Number.isFinite(Number(initialY)) ? Number(initialY) : (40 + Math.random() * 100);
+    const { pos, onMouseDown } = useDraggable(startX, startY, { onDragEnd: onMove });
     useEffect(() => { if (!run || left <= 0) return; const t = setInterval(() => setLeft(s => Math.max(0, s - 1)), 1000); return () => clearInterval(t); }, [run, left]);
     const done = left <= 0, pct = 1 - left / (minutes * 60);
     const c = light ? { bg: "rgba(255,255,255,0.65)", bd: "rgba(0,0,0,0.08)", tx: "#2d3436", txm: "rgba(45,52,54,0.4)" } : { bg: "rgba(255,255,255,0.04)", bd: "rgba(255,255,255,0.08)", tx: "#fff", txm: "rgba(255,255,255,0.4)" };
@@ -929,9 +951,11 @@ function TimerWidget({ id, minutes, label, onRemove, light }) {
     </div>;
 }
 
-function ClockWidget({ id, onRemove, light }) {
+function ClockWidget({ id, initialX, initialY, onRemove, onMove, light }) {
     const [now, setNow] = useState(new Date());
-    const { pos, onMouseDown } = useDraggable(450 + Math.random() * 100, 180 + Math.random() * 80);
+    const startX = Number.isFinite(Number(initialX)) ? Number(initialX) : (450 + Math.random() * 100);
+    const startY = Number.isFinite(Number(initialY)) ? Number(initialY) : (180 + Math.random() * 80);
+    const { pos, onMouseDown } = useDraggable(startX, startY, { onDragEnd: onMove });
     useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
     const c = light ? { bg: "rgba(255,255,255,0.65)", bd: "rgba(0,0,0,0.08)", tx: "#2d3436", txm: "rgba(45,52,54,0.3)" } : { bg: "rgba(255,255,255,0.04)", bd: "rgba(255,255,255,0.08)", tx: "#fff", txm: "rgba(255,255,255,0.3)" };
     return <div onMouseDown={onMouseDown} style={{ position: "absolute", left: pos.x, top: pos.y, background: c.bg, backdropFilter: "blur(20px)", border: `1px solid ${c.bd}`, borderRadius: 18, padding: "16px 24px", cursor: "grab", userSelect: "none", zIndex: 12, boxShadow: "0 6px 24px rgba(0,0,0,0.15)" }}>
@@ -941,10 +965,12 @@ function ClockWidget({ id, onRemove, light }) {
     </div>;
 }
 
-function QuoteWidget({ id, onRemove, light }) {
+function QuoteWidget({ id, initialX, initialY, onRemove, onMove, light }) {
     const qs = [{ t: "The only way to do great work is to love what you do.", a: "Jobs" }, { t: "What stands in the way becomes the way.", a: "Aurelius" }, { t: "Simplicity is the ultimate sophistication.", a: "Da Vinci" }, { t: "Everything you can imagine is real.", a: "Picasso" }];
     const q = useRef(qs[Math.floor(Math.random() * qs.length)]);
-    const { pos, onMouseDown } = useDraggable(400 + Math.random() * 200, 300 + Math.random() * 80);
+    const startX = Number.isFinite(Number(initialX)) ? Number(initialX) : (400 + Math.random() * 200);
+    const startY = Number.isFinite(Number(initialY)) ? Number(initialY) : (300 + Math.random() * 80);
+    const { pos, onMouseDown } = useDraggable(startX, startY, { onDragEnd: onMove });
     const c = light ? { bg: "rgba(255,255,255,0.65)", bd: "rgba(0,0,0,0.06)", tx: "rgba(45,52,54,0.8)", txm: "rgba(45,52,54,0.3)" } : { bg: "rgba(255,255,255,0.03)", bd: "rgba(255,255,255,0.06)", tx: "rgba(255,255,255,0.8)", txm: "rgba(255,255,255,0.3)" };
     return <div onMouseDown={onMouseDown} style={{ position: "absolute", left: pos.x, top: pos.y, maxWidth: 250, background: c.bg, backdropFilter: "blur(20px)", border: `1px solid ${c.bd}`, borderRadius: 14, padding: "18px 20px", cursor: "grab", userSelect: "none", zIndex: 12, boxShadow: "0 6px 24px rgba(0,0,0,0.15)" }}>
         <button onClick={e => { e.stopPropagation(); onRemove(id); }} style={{ position: "absolute", top: 5, right: 9, background: "none", border: "none", color: "rgba(128,128,128,0.25)", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>×</button>
@@ -1022,6 +1048,8 @@ function TasksPanel({
     ambient,
     deadlineAdaptive,
     compressedLowCount = 0,
+    panelPosition,
+    onPanelMove,
 }) {
     const prioC = { high: "#e74c3c", medium: "#f39c12", low: "#00b894" };
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
@@ -1068,7 +1096,7 @@ function TasksPanel({
     };
 
     return (
-        <Panel x={24} y={320} width={330} title={`Tasks · ${tasks.filter(t => !t.done && !t.isParent).length} active`} icon="✓" light={light} onClose={onClose} ambient={ambient} accent={accent}>
+        <Panel x={panelPosition?.x ?? 24} y={panelPosition?.y ?? 320} width={330} title={`Tasks · ${tasks.filter(t => !t.done && !t.isParent).length} active`} icon="✓" light={light} onClose={onClose} ambient={ambient} accent={accent} onMove={onPanelMove}>
             <div
                 data-nodrag
                 onDragEnter={handleDragEnter}
@@ -1135,7 +1163,7 @@ function TasksPanel({
     );
 }
 
-function CalendarPanel({ events, onDeleteEvent, onAddEvent, accent, light, onClose, ambient }) {
+function CalendarPanel({ events, onDeleteEvent, onAddEvent, accent, light, onClose, ambient, panelPosition, onPanelMove }) {
     const [view, setView] = useState("week");
     const [showForm, setShowForm] = useState(false);
     const [formTitle, setFormTitle] = useState(""), [formDate, setFormDate] = useState(""), [formTime, setFormTime] = useState("09:00");
@@ -1162,7 +1190,7 @@ function CalendarPanel({ events, onDeleteEvent, onAddEvent, accent, light, onClo
     };
 
     return (
-        <Panel x={24} y={485} width={330} title="Calendar" icon="📅" light={light} onClose={onClose} ambient={ambient} accent={accent}>
+        <Panel x={panelPosition?.x ?? 24} y={panelPosition?.y ?? 485} width={330} title="Calendar" icon="📅" light={light} onClose={onClose} ambient={ambient} accent={accent} onMove={onPanelMove}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <div style={{ display: "flex", gap: 3 }}>
                     {["week", "list"].map(v => <button key={v} onClick={() => setView(v)} style={{ padding: "2px 7px", borderRadius: 5, fontSize: 9, cursor: "pointer", fontFamily: "'JetBrains Mono'", textTransform: "uppercase", letterSpacing: 1, background: view === v ? `${accent}22` : "transparent", border: `1px solid ${view === v ? `${accent}44` : "transparent"}`, color: view === v ? accent : txm }}>{v}</button>)}
@@ -1223,7 +1251,9 @@ function BudgetPanel({
     onEmailDropExpense,
     canAcceptEmailDrop = false,
     emailDropLoading = false,
-    ambient
+    ambient,
+    panelPosition,
+    onPanelMove,
 }) {
     const [showForm, setShowForm] = useState(false);
     const [desc, setDesc] = useState(""), [amt, setAmt] = useState(""), [cat, setCat] = useState("other");
@@ -1279,7 +1309,7 @@ function BudgetPanel({
     };
 
     return (
-        <Panel x={370} y={320} width={250} title="Budget" icon="💰" light={light} onClose={onClose} ambient={ambient} accent={accent}>
+        <Panel x={panelPosition?.x ?? 370} y={panelPosition?.y ?? 320} width={250} title="Budget" icon="💰" light={light} onClose={onClose} ambient={ambient} accent={accent} onMove={onPanelMove}>
             <div
                 data-nodrag
                 onDragEnter={handleDragEnter}
@@ -1362,7 +1392,7 @@ function BudgetPanel({
     );
 }
 
-function RewardsPanel({ weeklyGoalCategory, setWeeklyGoalCategory, weeklyGoalTarget, setWeeklyGoalTarget, weeklyGoalProgress, weeklyGoalLabel, weeklyGoalHelper, weeklyStreak, accent, light, onClose, ambient }) {
+function RewardsPanel({ weeklyGoalCategory, setWeeklyGoalCategory, weeklyGoalTarget, setWeeklyGoalTarget, weeklyGoalProgress, weeklyGoalLabel, weeklyGoalHelper, weeklyStreak, accent, light, onClose, ambient, panelPosition, onPanelMove }) {
     const progress = weeklyGoalTarget > 0 ? Math.min(weeklyGoalProgress / weeklyGoalTarget, 1) : 0;
     const remaining = Math.max(weeklyGoalTarget - weeklyGoalProgress, 0);
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
@@ -1375,7 +1405,7 @@ function RewardsPanel({ weeklyGoalCategory, setWeeklyGoalCategory, weeklyGoalTar
     const rewardSubtext = progress >= 1 ? "Reward unlocked ✦" : progress >= 0.6 ? "On track this week" : "Keep building momentum";
 
     return (
-        <Panel x={645} y={320} width={250} title="Rewards" icon="⭐" light={light} onClose={onClose} ambient={ambient} accent="#f59e0b">
+        <Panel x={panelPosition?.x ?? 645} y={panelPosition?.y ?? 320} width={250} title="Rewards" icon="⭐" light={light} onClose={onClose} ambient={ambient} accent="#f59e0b" onMove={onPanelMove}>
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
                 <div>
                     <div style={{ fontSize: 9, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 1.2, textTransform: "uppercase" }}>Weekly goal</div>
@@ -1426,7 +1456,7 @@ const WMO_CODES = {
     95: ["⛈️", "Thunderstorm"], 96: ["⛈️", "Thunderstorm"], 99: ["⛈️", "Thunderstorm"],
 };
 
-function WeatherWidget({ light, accent, ambient, onClose }) {
+function WeatherWidget({ light, accent, ambient, onClose, panelPosition, onPanelMove }) {
     const [query, setQuery] = useState("Dublin");
     const [editing, setEditing] = useState(false);
     const [suggestions, setSuggestions] = useState([]);
@@ -1488,7 +1518,7 @@ function WeatherWidget({ light, accent, ambient, onClose }) {
     const [icon, desc] = weather ? (WMO_CODES[weather.weathercode] ?? ["🌡️", "Unknown"]) : ["🌡️", "—"];
 
     return (
-        <Panel x={645} y={590} width={210} title="Weather" icon="🌤️" onClose={onClose} ambient={ambient} light={light} accent={accent}>
+        <Panel x={panelPosition?.x ?? 645} y={panelPosition?.y ?? 590} width={210} title="Weather" icon="🌤️" onClose={onClose} ambient={ambient} light={light} accent={accent} onMove={onPanelMove}>
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
 
                 {/* City input + suggestions */}
@@ -1601,7 +1631,9 @@ function GmailPanel({
     light,
     accent,
     ambient,
-    onClose
+    onClose,
+    panelPosition,
+    onPanelMove,
 }) {
     const tx = light ? "#2d3436" : "#fff";
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
@@ -1691,8 +1723,8 @@ function GmailPanel({
 
     return (
         <Panel
-            x={PANEL_EDGE_MARGIN + PANEL_FIXED_WIDTH + PANEL_COLUMN_GAP}
-            y={70}
+            x={panelPosition?.x ?? (PANEL_EDGE_MARGIN + PANEL_FIXED_WIDTH + PANEL_COLUMN_GAP)}
+            y={panelPosition?.y ?? 70}
             width={420}
             title={`Gmail · ${emails.length}`}
             icon="📧"
@@ -1702,6 +1734,7 @@ function GmailPanel({
             accent={accent}
             overflow="visible"
             zIndex={showDetailPopover ? 90 : 15}
+            onMove={onPanelMove}
         >
             <div ref={panelBodyRef} style={{ display: "flex", flexDirection: "column", gap: 8, position: "relative" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
@@ -1922,7 +1955,9 @@ function AdaptiveInspectorPanel({
     onClose,
     adaptivePausedUntil,
     onPauseAdaptive,
-    onResumeAdaptive
+    onResumeAdaptive,
+    panelPosition,
+    onPanelMove,
 }) {
     const tx = light ? "#2d3436" : "#fff";
     const txm = light ? "rgba(45,52,54,0.5)" : "rgba(255,255,255,0.45)";
@@ -1942,7 +1977,7 @@ function AdaptiveInspectorPanel({
     };
 
     return (
-        <Panel x={1080} y={70} width={320} title="Adaptive inspector" icon="🧭" light={light} onClose={onClose} ambient={ambient} accent={accent}>
+        <Panel x={panelPosition?.x ?? 1080} y={panelPosition?.y ?? 70} width={320} title="Adaptive inspector" icon="🧭" light={light} onClose={onClose} ambient={ambient} accent={accent} onMove={onPanelMove}>
             <div style={{ display: "grid", gap: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                     <div style={{ fontSize: 10, color: isPaused ? "#f59e0b" : accent, fontFamily: "'JetBrains Mono'" }}>
@@ -2053,7 +2088,7 @@ async function searchTCDDirect(url) {
 // ═══════════════════════════════════════════════════
 // TCD MODULES PANEL
 // ═══════════════════════════════════════════════════
-function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemoveModule, accent, light, onClose, ambient }) {
+function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemoveModule, accent, light, onClose, ambient, panelPosition, onPanelMove }) {
     const [searching, setSearching] = useState(false);
     const [searchStep, setSearchStep] = useState("");
     const [searchQuery, setSearchQuery] = useState(tcdDegree?.name || "");
@@ -2163,7 +2198,7 @@ function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemov
     const inStyle = (extra) => ({ background: "transparent", border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 6px", fontSize: 10, color: tx, outline: "none", fontFamily: "'DM Sans'", ...extra });
 
     return (
-        <Panel x={650} y={320} width={380} title={`TCD Modules · ${modules.length} registered · ${totalCredits} ECTS`} icon="🎓" light={light} onClose={onClose} ambient={ambient} accent={accent}>
+        <Panel x={panelPosition?.x ?? 650} y={panelPosition?.y ?? 320} width={380} title={`TCD Modules · ${modules.length} registered · ${totalCredits} ECTS`} icon="🎓" light={light} onClose={onClose} ambient={ambient} accent={accent} onMove={onPanelMove}>
             {/* Degree search bar */}
             <div style={{ marginBottom: 8, padding: "8px 10px", borderRadius: 8, background: light ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.04)", border: `1px solid ${bd}` }}>
                 {tcdDegree && <div style={{ fontSize: 8, fontFamily: "'JetBrains Mono'", color: accent, marginBottom: 5, letterSpacing: 1 }}>🎓 {tcdDegree.college} · {tcdDegree.name}</div>}
@@ -2356,7 +2391,7 @@ function TCDModulesPanel({ modules, tcdDegree, onSetDegree, onAddModule, onRemov
 // ═══════════════════════════════════════════════════
 // TIMETABLE PANEL
 // ═══════════════════════════════════════════════════
-function TimetablePanel({ modules, timetable, onAddSlot, onRemoveSlot, accent, light, onClose, ambient }) {
+function TimetablePanel({ modules, timetable, onAddSlot, onRemoveSlot, accent, light, onClose, ambient, panelPosition, onPanelMove }) {
     const [addForm, setAddForm] = useState(false);
     const [formModule, setFormModule] = useState(modules[0]?.code || "");
     const [formDay, setFormDay] = useState("monday");
@@ -2389,7 +2424,7 @@ function TimetablePanel({ modules, timetable, onAddSlot, onRemoveSlot, accent, l
     const selStyle = { background: light ? "rgba(255,255,255,0.8)" : "rgba(30,30,50,0.8)", border: `1px solid ${bd}`, borderRadius: 4, padding: "2px 4px", fontSize: 9, color: tx, outline: "none", colorScheme: light ? "light" : "dark" };
 
     return (
-        <Panel x={24} y={500} width={520} title="Timetable" icon="📆" light={light} onClose={onClose} ambient={ambient} accent={accent}>
+        <Panel x={panelPosition?.x ?? 24} y={panelPosition?.y ?? 500} width={520} title="Timetable" icon="📆" light={light} onClose={onClose} ambient={ambient} accent={accent} onMove={onPanelMove}>
             {timetable.length === 0 && !addForm && <div style={{ fontSize: 11, color: txm, fontStyle: "italic", textAlign: "center", padding: "8px 0 4px" }}>No classes yet — add a slot below</div>}
             {/* Grid */}
             {timetable.length > 0 && (
@@ -2467,6 +2502,7 @@ export default function App() {
     const [ambient, setAmbient] = useState({ ...DEFAULT_AMBIENT });
     const [showTasks, setShowTasks] = useState(true), [showCal, setShowCal] = useState(true), [showBudget, setShowBudget] = useState(true), [showRewards, setShowRewards] = useState(true), [showWeather, setShowWeather] = useState(true), [showGmail, setShowGmail] = useState(true), [showInspector, setShowInspector] = useState(true);
     const [showTCDModules, setShowTCDModules] = useState(false), [showTimetable, setShowTimetable] = useState(false);
+    const [panelLayout, setPanelLayout] = useState({});
     // TCD state — persisted to localStorage
     const [modules, setModules] = useState(() => { try { return JSON.parse(localStorage.getItem("tcd_modules") || "[]"); } catch { return []; } });
     const [timetable, setTimetable] = useState(() => { try { return JSON.parse(localStorage.getItem("tcd_timetable") || "[]"); } catch { return []; } });
@@ -2633,6 +2669,9 @@ export default function App() {
                 if (typeof state.showInspector === "boolean") setShowInspector(state.showInspector);
                 if (typeof state.showTCDModules === "boolean") setShowTCDModules(state.showTCDModules);
                 if (typeof state.showTimetable === "boolean") setShowTimetable(state.showTimetable);
+                if (state.panelLayout && typeof state.panelLayout === "object" && !Array.isArray(state.panelLayout)) {
+                    setPanelLayout(state.panelLayout);
+                }
 
                 if (Array.isArray(state.modules)) setModules(state.modules);
                 if (Array.isArray(state.timetable)) setTimetable(state.timetable);
@@ -3351,6 +3390,7 @@ export default function App() {
         weeklyGoalTarget,
         adaptiveLog,
         adaptivePausedUntil,
+        panelLayout,
     }), [
         bg,
         greeting,
@@ -3382,6 +3422,7 @@ export default function App() {
         weeklyGoalTarget,
         adaptiveLog,
         adaptivePausedUntil,
+        panelLayout,
     ]);
 
     const persistentDashboardStateJson = useMemo(() => {
@@ -3431,14 +3472,14 @@ export default function App() {
                     return result;
                 });
             }
-            else if (t === "add_timer") { const mins = Number(a.minutes); if (mins > 0) setTimers(p => [...p, { id: gid(), minutes: mins, label: a.label || "Timer" }]); else console.warn("[exec] add_timer skipped: invalid minutes:", a.minutes); }
+            else if (t === "add_timer") { const mins = Number(a.minutes); if (mins > 0) setTimers(p => [...p, { id: gid(), minutes: mins, label: a.label || "Timer", x: Number(a.x) || 420 + Math.random() * 150, y: Number(a.y) || 40 + Math.random() * 100 }]); else console.warn("[exec] add_timer skipped: invalid minutes:", a.minutes); }
             else if (t === "change_theme" && themes[a.theme]) {
                 setBg(themes[a.theme].bg);
                 setAccent(themes[a.theme].accent);
                 setAmbient(prev => ({ ...prev, mood: themeMoodMap[a.theme] || prev.mood }));
             }
             else if (t === "set_greeting" && a.text) setGreeting(a.text);
-            else if (t === "add_widget" && a.widgetType) setWidgets(p => [...p, { id: gid(), type: a.widgetType }]);
+            else if (t === "add_widget" && a.widgetType) setWidgets(p => [...p, { id: gid(), type: a.widgetType, x: Number(a.x) || 400 + Math.random() * 200, y: Number(a.y) || 180 + Math.random() * 160 }]);
             else if (t === "add_event") setEvents(p => [...p, { id: gid(), title: a.title || "Event", date: a.date || new Date().toISOString().split("T")[0], time: a.time || "09:00", duration: Number(a.duration) || 60, color: a.color || "#6c5ce7" }]);
             else if (t === "delete_event" && a.title) setEvents(p => p.filter(e => !String(e.title).toLowerCase().includes(String(a.title).toLowerCase())));
             else if (t === "add_expense") setExpenses(p => [...p, { id: gid(), description: a.description || "Expense", amount: Number(a.amount) || 0, category: a.category || "other" }]);
@@ -3630,6 +3671,25 @@ export default function App() {
         : (deadlineAdaptiveActive && nearestDeadline
             ? `Rule ${adaptiveRuleModel.level.toUpperCase()} ${adaptiveRuleModel.score}/100 · ${formatHoursLeft(nearestDeadline.hoursLeft)} left`
             : (adaptiveStatusMap[ambient.mood] || "Planning mode active"));
+    const getPanelPosition = useCallback((key, fallbackX, fallbackY) => {
+        const entry = panelLayout?.[key];
+        const x = Number(entry?.x);
+        const y = Number(entry?.y);
+        if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
+        return { x: fallbackX, y: fallbackY };
+    }, [panelLayout]);
+    const setPanelPosition = useCallback((key, nextPos) => {
+        if (!key || !nextPos) return;
+        const x = Math.round(Number(nextPos.x));
+        const y = Math.round(Number(nextPos.y));
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        setPanelLayout(prev => {
+            const current = prev?.[key];
+            if (current?.x === x && current?.y === y) return prev;
+            const next = { ...(prev || {}), [key]: { x, y } };
+            return next;
+        });
+    }, []);
 
     const noteColors = ["#fef68a", "#ffd6a5", "#caffbf", "#bde0fe", "#e9d5ff"];
     const getNextPostitPosition = (count) => ({
@@ -3814,6 +3874,8 @@ export default function App() {
                     accent={accent}
                     ambient={ambient}
                     onClose={() => setShowGmail(false)}
+                    panelPosition={getPanelPosition("gmail", PANEL_EDGE_MARGIN + PANEL_FIXED_WIDTH + PANEL_COLUMN_GAP, 70)}
+                    onPanelMove={(pos) => setPanelPosition("gmail", pos)}
                 />}
                 {showTasks && <TasksPanel
                     tasks={deadlineTaskView.list}
@@ -3830,8 +3892,10 @@ export default function App() {
                     ambient={ambient}
                     deadlineAdaptive={deadlineAdaptiveActive}
                     compressedLowCount={deadlineTaskView.hiddenLowCount}
+                    panelPosition={getPanelPosition("tasks", 24, 320)}
+                    onPanelMove={(pos) => setPanelPosition("tasks", pos)}
                 />}
-                {showCal && <CalendarPanel events={events} onDeleteEvent={id => setEvents(e => e.filter(ev => ev.id !== id))} onAddEvent={manualAddEvent} accent={accent} light={light} onClose={() => setShowCal(false)} ambient={ambient} />}
+                {showCal && <CalendarPanel events={events} onDeleteEvent={id => setEvents(e => e.filter(ev => ev.id !== id))} onAddEvent={manualAddEvent} accent={accent} light={light} onClose={() => setShowCal(false)} ambient={ambient} panelPosition={getPanelPosition("calendar", 24, 485)} onPanelMove={(pos) => setPanelPosition("calendar", pos)} />}
                 {showBudget && <BudgetPanel
                     expenses={expenses}
                     budget={budget}
@@ -3844,9 +3908,11 @@ export default function App() {
                     canAcceptEmailDrop={isGmailDragging && !emailDropLoading && !emailBudgetDropLoading}
                     emailDropLoading={emailBudgetDropLoading}
                     ambient={ambient}
+                    panelPosition={getPanelPosition("budget", 370, 320)}
+                    onPanelMove={(pos) => setPanelPosition("budget", pos)}
                 />}
-                {showRewards && <RewardsPanel weeklyGoalCategory={weeklyGoalCategory} setWeeklyGoalCategory={setWeeklyGoalCategory} weeklyGoalTarget={weeklyGoalTarget} setWeeklyGoalTarget={setWeeklyGoalTarget} weeklyGoalProgress={weeklyGoalProgress} weeklyGoalLabel={activeWeeklyGoal.label} weeklyGoalHelper={weeklyGoalHelper} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" />}
-                {showWeather && <WeatherWidget light={light} accent={accent} ambient={ambient} onClose={() => setShowWeather(false)} />}
+                {showRewards && <RewardsPanel weeklyGoalCategory={weeklyGoalCategory} setWeeklyGoalCategory={setWeeklyGoalCategory} weeklyGoalTarget={weeklyGoalTarget} setWeeklyGoalTarget={setWeeklyGoalTarget} weeklyGoalProgress={weeklyGoalProgress} weeklyGoalLabel={activeWeeklyGoal.label} weeklyGoalHelper={weeklyGoalHelper} weeklyStreak={Math.max(1, Math.ceil(studyStreak / 2))} light={light} ambient={ambient} onClose={() => setShowRewards(false)} accent="#f59e0b" panelPosition={getPanelPosition("rewards", 645, 320)} onPanelMove={(pos) => setPanelPosition("rewards", pos)} />}
+                {showWeather && <WeatherWidget light={light} accent={accent} ambient={ambient} onClose={() => setShowWeather(false)} panelPosition={getPanelPosition("weather", 645, 590)} onPanelMove={(pos) => setPanelPosition("weather", pos)} />}
                 {showInspector && <AdaptiveInspectorPanel
                     logs={adaptiveLog}
                     ruleModel={adaptiveRuleModel}
@@ -3857,9 +3923,11 @@ export default function App() {
                     adaptivePausedUntil={adaptivePausedUntil}
                     onPauseAdaptive={pauseAdaptiveForTwoHours}
                     onResumeAdaptive={resumeAdaptiveNow}
+                    panelPosition={getPanelPosition("inspector", 1080, 70)}
+                    onPanelMove={(pos) => setPanelPosition("inspector", pos)}
                 />}
-                {showTCDModules && <TCDModulesPanel modules={modules} tcdDegree={tcdDegree} onSetDegree={setTcdDegree} onAddModule={m => setModules(p => p.some(x => x.code === m.code) ? p : [...p, m])} onRemoveModule={id => setModules(p => p.filter(m => m.id !== id))} accent={accent} light={light} onClose={() => setShowTCDModules(false)} ambient={ambient} />}
-                {showTimetable && <TimetablePanel modules={modules} timetable={timetable} onAddSlot={s => setTimetable(p => [...p, s])} onRemoveSlot={id => setTimetable(p => p.filter(s => s.id !== id))} accent={accent} light={light} onClose={() => setShowTimetable(false)} ambient={ambient} />}
+                {showTCDModules && <TCDModulesPanel modules={modules} tcdDegree={tcdDegree} onSetDegree={setTcdDegree} onAddModule={m => setModules(p => p.some(x => x.code === m.code) ? p : [...p, m])} onRemoveModule={id => setModules(p => p.filter(m => m.id !== id))} accent={accent} light={light} onClose={() => setShowTCDModules(false)} ambient={ambient} panelPosition={getPanelPosition("tcdModules", 650, 320)} onPanelMove={(pos) => setPanelPosition("tcdModules", pos)} />}
+                {showTimetable && <TimetablePanel modules={modules} timetable={timetable} onAddSlot={s => setTimetable(p => [...p, s])} onRemoveSlot={id => setTimetable(p => p.filter(s => s.id !== id))} accent={accent} light={light} onClose={() => setShowTimetable(false)} ambient={ambient} panelPosition={getPanelPosition("timetable", 24, 500)} onPanelMove={(pos) => setPanelPosition("timetable", pos)} />}
 
                 {showPostitLibrary && <div style={{ position: "absolute", inset: 0, zIndex: 120, background: light ? "rgba(245,240,235,0.62)" : "rgba(8,10,18,0.58)", backdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
                     <div className="anim-panel" style={{ width: "min(940px, 92vw)", height: "min(620px, 84vh)", display: "grid", gridTemplateColumns: "320px 1fr", background: light ? "rgba(255,255,255,0.78)" : "rgba(10,12,22,0.82)", border: `1px solid ${pBd}`, borderRadius: 22, overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,0.28)" }}>
@@ -3911,9 +3979,9 @@ export default function App() {
                     </div>
                 </div>}
 
-                {postits.map(p => <PostIt key={p.id} id={p.id} content={p.content} color={p.color} initialX={p.x} initialY={p.y} onRemove={id => setPostits(pp => pp.filter(n => n.id !== id))} onEdit={(id, v) => setPostits(pp => pp.map(n => n.id === id ? { ...n, content: v } : n))} />)}
-                {timers.map(t => <TimerWidget key={t.id} id={t.id} minutes={t.minutes} label={t.label} onRemove={id => setTimers(tt => tt.filter(n => n.id !== id))} light={light} />)}
-                {widgets.map(w => w.type === "clock" ? <ClockWidget key={w.id} id={w.id} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} light={light} /> : w.type === "quote" ? <QuoteWidget key={w.id} id={w.id} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} light={light} /> : null)}
+                {postits.map(p => <PostIt key={p.id} id={p.id} content={p.content} color={p.color} initialX={p.x} initialY={p.y} onRemove={id => setPostits(pp => pp.filter(n => n.id !== id))} onEdit={(id, v) => setPostits(pp => pp.map(n => n.id === id ? { ...n, content: v } : n))} onMove={({ x, y }) => setPostits(pp => pp.map(n => n.id === p.id ? { ...n, x, y } : n))} />)}
+                {timers.map(t => <TimerWidget key={t.id} id={t.id} minutes={t.minutes} label={t.label} initialX={t.x} initialY={t.y} onRemove={id => setTimers(tt => tt.filter(n => n.id !== id))} onMove={({ x, y }) => setTimers(tt => tt.map(n => n.id === t.id ? { ...n, x, y } : n))} light={light} />)}
+                {widgets.map(w => w.type === "clock" ? <ClockWidget key={w.id} id={w.id} initialX={w.x} initialY={w.y} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} onMove={({ x, y }) => setWidgets(ww => ww.map(n => n.id === w.id ? { ...n, x, y } : n))} light={light} /> : w.type === "quote" ? <QuoteWidget key={w.id} id={w.id} initialX={w.x} initialY={w.y} onRemove={id => setWidgets(ww => ww.filter(n => n.id !== id))} onMove={({ x, y }) => setWidgets(ww => ww.map(n => n.id === w.id ? { ...n, x, y } : n))} light={light} /> : null)}
 
                 {!postits.length && !timers.length && !widgets.length && !showTasks && !showCal && !showBudget && !showRewards && !showWeather && !showGmail && !showInspector && !showTCDModules && !showTimetable && <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", color: txs, userSelect: "none", zIndex: 5 }}>
                     <div style={{ fontSize: 40, marginBottom: 8 }}>✦</div><div style={{ fontFamily: "'JetBrains Mono'", fontSize: 10, letterSpacing: 2 }}>YOUR STUDENT DASHBOARD IS CLEAR</div><div style={{ marginTop: 8, fontSize: 11, color: txm }}>Turn panels back on or ask the copilot to add something.</div>
