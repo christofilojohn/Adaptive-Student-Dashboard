@@ -3,10 +3,27 @@ import { useState, useRef, useEffect, useCallback, useMemo, createContext, useCo
 // ═══════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════
+const VITE_ENV = (typeof import.meta !== "undefined" && import.meta?.env) ? import.meta.env : {};
+const ALLOW_LOCAL_CHAT = String(VITE_ENV.VITE_CHAT_ALLOW_LOCAL ?? "true").trim().toLowerCase() !== "false";
+
+function normalizeChatMode(raw) {
+    const mode = String(raw || "").toLowerCase().trim();
+    if (mode === "local" && ALLOW_LOCAL_CHAT) return "local";
+    return "zhipu";
+}
+
+function getChatModeLabel(mode) {
+    return normalizeChatMode(mode) === "local" ? "LOCAL LLM" : "ZHIPU API";
+}
+
+const DEFAULT_CHAT_MODE = normalizeChatMode(VITE_ENV.VITE_CHAT_DEFAULT_MODE || "zhipu");
+const DEFAULT_ZHIPU_CHAT_MODEL = String(VITE_ENV.VITE_ZHIPU_CHAT_MODEL || "glm-4-flash").trim() || "glm-4-flash";
+
 const LLM_CONFIG = {
-    mode: "local",
     local_url: "/v1/chat/completions",
     local_model: "phi-3.5-mini-instruct",
+    zhipu_url: "/search/chat-completions",
+    zhipu_model: DEFAULT_ZHIPU_CHAT_MODEL,
 };
 const RIGHT_RAIL_WIDTH = 320;
 const PANEL_EDGE_MARGIN = 12;
@@ -418,8 +435,9 @@ function parseResponse(raw) {
     return null;
 }
 
-async function fetchLLM(systemPrompt, userMsg, signal, maxTok = 500) {
-    if (LLM_CONFIG.mode === "local") {
+async function fetchLLM(systemPrompt, userMsg, signal, maxTok = 500, mode = DEFAULT_CHAT_MODE) {
+    const activeMode = normalizeChatMode(mode);
+    if (activeMode === "local") {
         const r = await fetch(LLM_CONFIG.local_url, {
             method: "POST", signal, headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model: LLM_CONFIG.local_model, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMsg }], temperature: 0.3, max_tokens: maxTok, response_format: { type: "json_object" } })
@@ -427,14 +445,33 @@ async function fetchLLM(systemPrompt, userMsg, signal, maxTok = 500) {
         if (!r.ok) throw new Error(`LLM server error: ${r.status} ${r.statusText}`);
         return (await r.json()).choices?.[0]?.message?.content || "{}";
     }
+
+    const r = await fetch(LLM_CONFIG.zhipu_url, {
+        method: "POST",
+        signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            model: LLM_CONFIG.zhipu_model,
+            messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userMsg }],
+            temperature: 0.3,
+            max_tokens: maxTok,
+            response_format: { type: "json_object" },
+        }),
+    });
+    if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data?.error || `Zhipu proxy error: ${r.status} ${r.statusText}`);
+    }
+    const data = await r.json().catch(() => ({}));
+    return data?.choices?.[0]?.message?.content || data?.content || "{}";
 }
 
-async function callLLM(msg, state) {
+async function callLLM(msg, state, mode = DEFAULT_CHAT_MODE) {
     if (chatCtrl) chatCtrl.abort();
     chatCtrl = new AbortController();
     const full = SYSTEM_PROMPT + buildDateContext() + `\n\nState: ${JSON.stringify(state)}`;
     try {
-        const raw = await fetchLLM(full, msg, chatCtrl.signal, 500);
+        const raw = await fetchLLM(full, msg, chatCtrl.signal, 500, mode);
         chatCtrl = null;
         const parsed = parseResponse(raw);
         if (parsed) return { actions: parsed.actions, reply: parsed.reply || "Done! ✨" };
@@ -450,11 +487,11 @@ const AMBIENT_PROMPT = `You adjust a dashboard's visual atmosphere. Respond with
 If the content has emotional weight, return: {"actions":[{"type":"adjust_ambient","glowColor":"#hex","glowIntensity":0.1,"borderWarmth":0.5,"particles":"none","mood":"label"}],"reply":""}
 If no adjustment needed: {"actions":[],"reply":""}`;
 
-async function callAmbientLLM(contextMsg) {
+async function callAmbientLLM(contextMsg, mode = DEFAULT_CHAT_MODE) {
     if (bgCtrl) bgCtrl.abort();
     bgCtrl = new AbortController();
     try {
-        const raw = await fetchLLM(AMBIENT_PROMPT, contextMsg, bgCtrl.signal, 200);
+        const raw = await fetchLLM(AMBIENT_PROMPT, contextMsg, bgCtrl.signal, 200, mode);
         bgCtrl = null;
         return parseResponse(raw) || { actions: [], reply: "" };
     } catch { bgCtrl = null; return { actions: [], reply: "" }; }
@@ -2507,10 +2544,11 @@ export default function App() {
     const [emailBudgetDropLoading, setEmailBudgetDropLoading] = useState(false);
     const [adaptiveLog, setAdaptiveLog] = useState([]);
     const [adaptivePausedUntil, setAdaptivePausedUntil] = useState(null);
+    const [chatMode, setChatMode] = useState(DEFAULT_CHAT_MODE);
     const [input, setInput] = useState(""), [loading, setLoading] = useState(false);
     const [lennyMood, setLennyMood] = useState("neutral");
     const [nowTick, setNowTick] = useState(() => Date.now());
-    const [msgs, setMsgs] = useState([{ role: "assistant", text: `Ready! (${LLM_CONFIG.mode === "local" ? "local LLM" : "API"})\n\n• "make it cozy"\n• "check off documentation"\n• "meeting this friday 2pm"\n• "I spent €12 on lunch"\n• "focus mode"\n• "sync gmail tasks"\n• "show gmail emails"\n• Drag a billing email into Budget` }]);
+    const [msgs, setMsgs] = useState([{ role: "assistant", text: `Ready! (${getChatModeLabel(DEFAULT_CHAT_MODE)})\n\n• "make it cozy"\n• "check off documentation"\n• "meeting this friday 2pm"\n• "I spent €12 on lunch"\n• "focus mode"\n• "sync gmail tasks"\n• "show gmail emails"\n• Drag a billing email into Budget` }]);
 
     const scrollRef = useRef(null), inputRef = useRef(null), idRef = useRef(300), ambientTimerRef = useRef(null), deadlineModeKeyRef = useRef("");
     const gmailAutoSyncKeyRef = useRef("");
@@ -2658,6 +2696,7 @@ export default function App() {
                 }
                 if (Array.isArray(state.adaptiveLog)) setAdaptiveLog(state.adaptiveLog.slice(0, 40));
                 if (typeof state.adaptivePausedUntil === "string" || state.adaptivePausedUntil === null) setAdaptivePausedUntil(state.adaptivePausedUntil);
+                if (typeof state.chatMode === "string") setChatMode(normalizeChatMode(state.chatMode));
 
                 try {
                     lastPersistedStateJsonRef.current = JSON.stringify(state);
@@ -2825,7 +2864,7 @@ export default function App() {
         setTasks(p => [...p, { id: gid(), text: text.trim(), priority: "medium", done: false }]);
         const inferred = inferMood(text, [{ type: "add_task" }]);
         if (inferred) setLennyMood(inferred);
-        callAmbientLLM(`User added task: "${text}". Emotional weight?`).then(r => {
+        callAmbientLLM(`User added task: "${text}". Emotional weight?`, chatMode).then(r => {
             const safe = (r.actions || []).filter(a => a.type === "adjust_ambient");
             if (safe.length) exec(safe);
         });
@@ -2834,7 +2873,7 @@ export default function App() {
         setEvents(p => [...p, { id: gid(), title, date, time, duration: 60, color }]);
         const inferred = inferMood(title, [{ type: "add_event" }]);
         if (inferred) setLennyMood(inferred);
-        callAmbientLLM(`User added event: "${title}" on ${date}. Emotional weight?`).then(r => {
+        callAmbientLLM(`User added event: "${title}" on ${date}. Emotional weight?`, chatMode).then(r => {
             const safe = (r.actions || []).filter(a => a.type === "adjust_ambient");
             if (safe.length) exec(safe);
         });
@@ -3351,6 +3390,7 @@ export default function App() {
         weeklyGoalTarget,
         adaptiveLog,
         adaptivePausedUntil,
+        chatMode,
     }), [
         bg,
         greeting,
@@ -3382,6 +3422,7 @@ export default function App() {
         weeklyGoalTarget,
         adaptiveLog,
         adaptivePausedUntil,
+        chatMode,
     ]);
 
     const persistentDashboardStateJson = useMemo(() => {
@@ -3527,7 +3568,7 @@ export default function App() {
         }
 
         try {
-            const r = await callLLM(txt, snap());
+            const r = await callLLM(txt, snap(), chatMode);
             if (r.reply) {
                 exec(r.actions);
                 setMsgs(m => [...m, { role: "assistant", text: r.reply, ac: r.actions.length }]);
@@ -3542,7 +3583,7 @@ export default function App() {
                     clearTimeout(ambientTimerRef.current);
                     const ambientMsg = `User said: "${txt}". Actions taken: ${r.actions.map(a => a.type).join(", ") || "none"}. Emotional weight?`;
                     ambientTimerRef.current = setTimeout(() => {
-                        callAmbientLLM(ambientMsg).then(ar => {
+                        callAmbientLLM(ambientMsg, chatMode).then(ar => {
                             const safe = (ar.actions || []).filter(a => a.type === "adjust_ambient");
                             if (safe.length) exec(safe);
                         });
@@ -3928,8 +3969,36 @@ export default function App() {
                         <div style={{ width: 26, height: 26, borderRadius: 7, background: `linear-gradient(135deg, ${accent}, ${accent}88)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, transition: "background 0.8s" }}>⚡</div>
                         <div>
                             <div style={{ fontSize: 12, fontWeight: 600 }}>Study Copilot</div>
-                            <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 1 }}>{loading ? "THINKING..." : "LOCAL LLM"}</div>
+                            <div style={{ fontSize: 8, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 1 }}>{loading ? "THINKING..." : getChatModeLabel(chatMode)}</div>
                         </div>
+                    </div>
+                    <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 5 }}>
+                        {[
+                            { key: "zhipu", label: "Zhipu" },
+                            ...(ALLOW_LOCAL_CHAT ? [{ key: "local", label: "Local" }] : []),
+                        ].map(option => {
+                            const active = chatMode === option.key;
+                            return (
+                                <button
+                                    key={option.key}
+                                    onClick={() => setChatMode(option.key)}
+                                    style={{
+                                        padding: "3px 8px",
+                                        borderRadius: 999,
+                                        fontSize: 8.5,
+                                        fontFamily: "'JetBrains Mono'",
+                                        letterSpacing: 0.4,
+                                        cursor: "pointer",
+                                        border: `1px solid ${active ? `${accent}70` : (light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)")}`,
+                                        background: active ? `${accent}1f` : (light ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.035)"),
+                                        color: active ? accent : txm,
+                                        transition: "all 0.2s",
+                                    }}
+                                >
+                                    {option.label}
+                                </button>
+                            );
+                        })}
                     </div>
                 </div>
                 <div style={{ flex: 1, overflowY: "auto", padding: "10px 10px 4px", display: "flex", flexDirection: "column", gap: 7 }}>

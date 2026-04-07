@@ -294,6 +294,8 @@ cp .env.example .env
 - `GMAIL_CLIENT_SECRET`
 - `GMAIL_REFRESH_TOKEN`
 - `GMAIL_TEST_TO` (recommended for Generate tests)
+- `VITE_CHAT_DEFAULT_MODE=zhipu` (default deployment mode)
+- `VITE_CHAT_ALLOW_LOCAL=false` (recommended on low-spec servers, Zhipu-only)
 
 3. Start search backend (Terminal A):
 ```bash
@@ -317,6 +319,8 @@ npm run dev
 - Run `sync gmail tasks` (or use the quick action) to auto-add extracted tasks
 - Drag a generated bill email to **Budget** to auto-add an expense
 - Check **Adaptive Inspector** for conversion logs
+- In **Study Copilot**, use the mode toggle (`Zhipu` / `Local`) to switch chat backend at runtime
+  - If `VITE_CHAT_ALLOW_LOCAL=false`, only `Zhipu` is shown (Local disabled)
 
 ## Local File Database (SQLite)
 

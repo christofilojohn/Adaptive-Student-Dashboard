@@ -26,6 +26,7 @@
  *   POST /gmail-email-to-expense { id } → { expense, email, model, fetchedAt }
  *   POST /gmail-test-flow { to?, scenario?, waitMs? } → { pass, matchedTask, tasks, ... }
  *   POST /gmail-generate-sample-emails { to?, kinds? } → { sent, sentCount, ... }
+ *   POST /chat-completions { messages, model?, temperature?, max_tokens?, response_format? } → { choices, model, usage? }
  *   POST /dashboard-state-load {} → { state, updatedAt }
  *   POST /dashboard-state-save { state } → { ok, updatedAt, bytes }
  */
@@ -1646,6 +1647,77 @@ function dashboardStateSave(state) {
     return { ok: true, updatedAt, bytes };
 }
 
+function clampNumber(value, min, max, fallback) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return fallback;
+    return Math.min(max, Math.max(min, numeric));
+}
+
+function sanitizeChatMessages(messages) {
+    const safeMessages = Array.isArray(messages) ? messages : [];
+    const allowedRoles = new Set(['system', 'user', 'assistant']);
+    return safeMessages
+        .filter(item => item && typeof item === 'object')
+        .map(item => {
+            const roleRaw = String(item.role || 'user').toLowerCase();
+            const role = allowedRoles.has(roleRaw) ? roleRaw : 'user';
+            const content = String(item.content || '').slice(0, 20000);
+            return { role, content };
+        })
+        .filter(item => item.content.trim().length > 0);
+}
+
+async function zhipuChatCompletionsProxy({
+    messages,
+    model,
+    temperature,
+    max_tokens,
+    response_format,
+} = {}) {
+    const apiKey = String(process.env.ZHIPU_API_KEY || '').trim();
+    if (!apiKey) {
+        throw new Error('missing ZHIPU_API_KEY');
+    }
+
+    const normalizedMessages = sanitizeChatMessages(messages);
+    if (!normalizedMessages.length) {
+        throw new Error('messages required');
+    }
+
+    const selectedModel = String(model || process.env.ZHIPU_MODEL || 'glm-4-flash').trim() || 'glm-4-flash';
+    const payload = {
+        model: selectedModel,
+        messages: normalizedMessages,
+        temperature: clampNumber(temperature, 0, 1.5, 0.3),
+        max_tokens: Math.round(clampNumber(max_tokens, 64, 2000, 500)),
+    };
+    if (response_format && response_format.type === 'json_object') {
+        payload.response_format = { type: 'json_object' };
+    }
+
+    const data = await fetchJson(ZHIPU_CHAT_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(payload),
+    }, 45000);
+
+    const content = String(data?.choices?.[0]?.message?.content || '').trim();
+    if (!content) {
+        throw new Error('empty model response');
+    }
+
+    return {
+        model: data?.model || selectedModel,
+        choices: Array.isArray(data?.choices) && data.choices.length > 0
+            ? data.choices
+            : [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
+        usage: data?.usage || null,
+    };
+}
+
 // ── HTTP server ───────────────────────────────────────────────────────────────
 
 function readBody(req) {
@@ -1757,6 +1829,15 @@ const server = createServer(async (req, res) => {
             send(res, 200, await gmailGenerateSampleEmails({
                 to: body.to,
                 kinds: body.kinds || body.types || body.categories,
+            }));
+
+        } else if (req.url === '/chat-completions' || req.url === '/search/chat-completions') {
+            send(res, 200, await zhipuChatCompletionsProxy({
+                messages: body.messages,
+                model: body.model,
+                temperature: body.temperature,
+                max_tokens: body.max_tokens,
+                response_format: body.response_format,
             }));
 
         } else if (req.url === '/dashboard-state-load' || req.url === '/search/dashboard-state-load') {
