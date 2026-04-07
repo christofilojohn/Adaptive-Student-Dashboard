@@ -1483,12 +1483,18 @@ function WeatherWidget({ light, accent, ambient, onClose }) {
         const ctrl = new AbortController();
         const t = setTimeout(async () => {
             try {
-                const geo = await fetch(
-                    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query.trim())}&count=5&language=en&format=json`,
-                    { signal: ctrl.signal }
-                ).then(r => r.json());
-                setSuggestions(geo.results ?? []);
-            } catch { /* ignore abort */ }
+                const res = await fetch("/search/weather-geocode", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    signal: ctrl.signal,
+                    body: JSON.stringify({ query: query.trim(), count: 5 }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data?.error || `Weather search failed (${res.status})`);
+                setSuggestions(Array.isArray(data?.results) ? data.results : []);
+            } catch (e) {
+                if (e?.name !== "AbortError") setSuggestions([]);
+            }
         }, 350);
         return () => { clearTimeout(t); ctrl.abort(); };
     }, [query, editing]);
@@ -1498,14 +1504,28 @@ function WeatherWidget({ light, accent, ambient, onClose }) {
         if (!selected) return;
         const ctrl = new AbortController();
         setFetching(true); setErr(null);
-        fetch(
-            `https://api.open-meteo.com/v1/forecast?latitude=${selected.latitude}&longitude=${selected.longitude}&current=temperature_2m,apparent_temperature,weathercode,wind_speed_10m,relative_humidity_2m&wind_speed_unit=kmh`,
-            { signal: ctrl.signal }
-        ).then(r => { if (!r.ok) throw new Error(`Weather API error: ${r.status}`); return r.json(); }).then(wx => {
-            setWeather({ ...wx.current, name: selected.name, country_code: selected.country_code });
+        fetch("/search/weather-current", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: ctrl.signal,
+            body: JSON.stringify({
+                latitude: selected.latitude,
+                longitude: selected.longitude,
+                name: selected.name,
+                country_code: selected.country_code,
+            }),
+        }).then(async (r) => {
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(data?.error || `Weather API error: ${r.status}`);
+            return data;
+        }).then(wx => {
+            setWeather({ ...(wx?.current || {}), name: selected.name, country_code: selected.country_code });
             setFetching(false);
         }).catch(e => {
-            if (e.name !== "AbortError") { setErr("Couldn't reach weather service"); setFetching(false); }
+            if (e.name !== "AbortError") {
+                setErr(`Couldn't reach weather service: ${e?.message || "unknown error"}`);
+                setFetching(false);
+            }
         });
         return () => ctrl.abort();
     }, [selected]);
@@ -1613,7 +1633,7 @@ function WeatherWidget({ light, accent, ambient, onClose }) {
                 </>}
 
                 <div style={{ fontSize: 7.5, color: txm, fontFamily: "'JetBrains Mono'", letterSpacing: 0.5, opacity: 0.7 }}>
-                    Tap city to search · Open-Meteo
+                    Tap city to search · Weather proxy
                 </div>
             </div>
         </Panel>

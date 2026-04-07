@@ -26,6 +26,8 @@
  *   POST /gmail-email-to-expense { id } → { expense, email, model, fetchedAt }
  *   POST /gmail-test-flow { to?, scenario?, waitMs? } → { pass, matchedTask, tasks, ... }
  *   POST /gmail-generate-sample-emails { to?, kinds? } → { sent, sentCount, ... }
+ *   POST /weather-geocode { query, count? } → { results }
+ *   POST /weather-current { latitude, longitude, name?, country_code? } → { current, source }
  *   POST /chat-completions { messages, model?, temperature?, max_tokens?, response_format? } → { choices, model, usage? }
  *   POST /dashboard-state-load {} → { state, updatedAt }
  *   POST /dashboard-state-save { state } → { ok, updatedAt, bytes }
@@ -70,6 +72,9 @@ const HDR  = { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml', 'A
 const GMAIL_API_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const GOOGLE_OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const ZHIPU_CHAT_URL = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
+const WEATHER_GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
+const WEATHER_FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
+const WEATHER_FALLBACK_URL = 'https://wttr.in';
 
 const GMAIL_DEFAULT_QUERY = process.env.GMAIL_QUERY || 'newer_than:7d -category:promotions -category:social';
 const GMAIL_DEFAULT_MAX_RESULTS = Math.max(1, Math.min(parseInt(process.env.GMAIL_MAX_RESULTS || '12', 10), 30));
@@ -124,6 +129,7 @@ const upsertGmailCacheStmt = dashboardDb.prepare(`
 `);
 const deleteGmailCacheStmt = dashboardDb.prepare('DELETE FROM gmail_cache WHERE cache_key = ?');
 const deleteExpiredGmailCacheStmt = dashboardDb.prepare('DELETE FROM gmail_cache WHERE expires_at <= ?');
+const deleteGmailListCacheStmt = dashboardDb.prepare(`DELETE FROM gmail_cache WHERE cache_key LIKE 'gmail:list:%'`);
 
 function pruneExpiredGmailCache(nowMs = Date.now()) {
     try { deleteExpiredGmailCacheStmt.run(nowMs); } catch { /* ignore cache cleanup errors */ }
@@ -164,6 +170,10 @@ function writeGmailCache(cacheKey, payload, ttlMs, nowMs = Date.now()) {
     const updatedAt = new Date(nowMs).toISOString();
     const expiresAt = nowMs + ttl;
     upsertGmailCacheStmt.run(cacheKey, payloadJson, updatedAt, expiresAt);
+}
+
+function invalidateGmailListCache() {
+    try { deleteGmailListCacheStmt.run(); } catch { /* ignore cache invalidation errors */ }
 }
 
 // ── HTML helpers ──────────────────────────────────────────────────────────────
@@ -332,6 +342,131 @@ async function fetchJson(url, options = {}, timeoutMs = 10000) {
         throw new Error(detail);
     }
     return data ?? {};
+}
+
+function normalizeWeatherSuggestion(row) {
+    const latitude = Number(row?.latitude ?? row?.lat);
+    const longitude = Number(row?.longitude ?? row?.lon);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    const id = String(row?.id || `${latitude.toFixed(4)},${longitude.toFixed(4)}`);
+    const name = String(row?.name || row?.display_name || '').trim();
+    if (!name) return null;
+    return {
+        id,
+        name,
+        latitude,
+        longitude,
+        country_code: String(row?.country_code || '').trim().toUpperCase() || undefined,
+        country: String(row?.country || '').trim() || undefined,
+        admin1: String(row?.admin1 || '').trim() || undefined,
+    };
+}
+
+async function weatherGeocode({ query, count } = {}) {
+    const q = String(query || '').trim();
+    if (!q) throw new Error('query required');
+    const maxCount = Math.max(1, Math.min(parseInt(count || '5', 10) || 5, 10));
+
+    try {
+        const openMeteo = await fetchJson(
+            `${WEATHER_GEOCODE_URL}?name=${encodeURIComponent(q)}&count=${maxCount}&language=en&format=json`,
+            { headers: { 'User-Agent': UA, Accept: 'application/json' } },
+            12000
+        );
+        const results = Array.isArray(openMeteo?.results)
+            ? openMeteo.results.map(normalizeWeatherSuggestion).filter(Boolean)
+            : [];
+        if (results.length > 0) return { results };
+    } catch {
+        // fallback below
+    }
+
+    const nominatim = await fetchJson(
+        `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=${maxCount}&q=${encodeURIComponent(q)}`,
+        { headers: { 'User-Agent': UA, Accept: 'application/json' } },
+        12000
+    );
+    const results = (Array.isArray(nominatim) ? nominatim : [])
+        .map(row => {
+            const display = String(row?.display_name || '').trim();
+            const parts = display.split(',').map(s => s.trim()).filter(Boolean);
+            return normalizeWeatherSuggestion({
+                id: row?.place_id,
+                name: parts[0] || display,
+                latitude: row?.lat,
+                longitude: row?.lon,
+                country: parts.length ? parts[parts.length - 1] : '',
+                country_code: row?.address?.country_code || '',
+                admin1: parts.length > 2 ? parts[1] : '',
+            });
+        })
+        .filter(Boolean);
+    return { results };
+}
+
+function mapWttrCodeToWmo(code) {
+    const table = {
+        113: 0, 116: 2, 119: 3, 122: 3, 143: 45, 176: 51, 179: 71, 182: 51, 185: 51,
+        200: 95, 227: 71, 230: 75, 248: 45, 260: 45, 263: 51, 266: 53, 281: 51, 284: 51,
+        293: 61, 296: 61, 299: 63, 302: 63, 305: 65, 308: 65, 311: 63, 314: 65, 317: 71,
+        320: 71, 323: 71, 326: 73, 329: 75, 332: 75, 335: 75, 338: 75, 350: 45, 353: 80,
+        356: 81, 359: 82, 362: 71, 365: 73, 368: 85, 371: 86, 374: 71, 377: 75, 386: 95,
+        389: 99, 392: 95, 395: 99,
+    };
+    const n = parseInt(code || '0', 10);
+    return table[n] ?? 3;
+}
+
+async function weatherCurrent({ latitude, longitude, name, country_code } = {}) {
+    const lat = Number(latitude);
+    const lon = Number(longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error('latitude and longitude required');
+
+    try {
+        const wx = await fetchJson(
+            `${WEATHER_FORECAST_URL}?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,weathercode,wind_speed_10m,relative_humidity_2m,is_day&wind_speed_unit=kmh`,
+            { headers: { 'User-Agent': UA, Accept: 'application/json' } },
+            12000
+        );
+        const current = wx?.current || null;
+        if (!current) throw new Error('weather payload missing current');
+        return {
+            source: 'open-meteo',
+            current: {
+                ...current,
+                name: String(name || '').trim() || undefined,
+                country_code: String(country_code || '').trim().toUpperCase() || undefined,
+            },
+        };
+    } catch {
+        // fallback to wttr.in for high-latency or blocked open-meteo regions
+    }
+
+    const wttr = await fetchJson(
+        `${WEATHER_FALLBACK_URL}/${lat},${lon}?format=j1`,
+        { headers: { 'User-Agent': UA, Accept: 'application/json' } },
+        12000
+    );
+    const current = Array.isArray(wttr?.current_condition) ? wttr.current_condition[0] : null;
+    if (!current) throw new Error('weather service unavailable');
+    const weathercode = mapWttrCodeToWmo(current.weatherCode);
+    const temperature = Number(current.temp_C);
+    const apparent = Number(current.FeelsLikeC);
+    const humidity = Number(current.humidity);
+    const wind = Number(current.windspeedKmph);
+    return {
+        source: 'wttr',
+        current: {
+            temperature_2m: Number.isFinite(temperature) ? temperature : 0,
+            apparent_temperature: Number.isFinite(apparent) ? apparent : 0,
+            weathercode,
+            wind_speed_10m: Number.isFinite(wind) ? wind : 0,
+            relative_humidity_2m: Number.isFinite(humidity) ? humidity : 0,
+            is_day: 1,
+            name: String(name || '').trim() || undefined,
+            country_code: String(country_code || '').trim().toUpperCase() || undefined,
+        },
+    };
 }
 
 async function getGmailAccessToken() {
@@ -1459,6 +1594,7 @@ async function sendGmailPriorityTestMail({ to, scenario }) {
             `${cfg.body}`,
         ],
     });
+    invalidateGmailListCache();
 
     return {
         to: target,
@@ -1494,6 +1630,7 @@ async function gmailGenerateSampleEmails({ to, kinds } = {}) {
             threadId: message?.threadId || '',
         });
     }
+    invalidateGmailListCache();
 
     return {
         to: target,
@@ -1829,6 +1966,20 @@ const server = createServer(async (req, res) => {
             send(res, 200, await gmailGenerateSampleEmails({
                 to: body.to,
                 kinds: body.kinds || body.types || body.categories,
+            }));
+
+        } else if (req.url === '/weather-geocode' || req.url === '/search/weather-geocode') {
+            send(res, 200, await weatherGeocode({
+                query: body.query || body.q || body.name,
+                count: body.count || body.limit,
+            }));
+
+        } else if (req.url === '/weather-current' || req.url === '/search/weather-current') {
+            send(res, 200, await weatherCurrent({
+                latitude: body.latitude,
+                longitude: body.longitude,
+                name: body.name,
+                country_code: body.country_code || body.countryCode,
             }));
 
         } else if (req.url === '/chat-completions' || req.url === '/search/chat-completions') {
